@@ -23,13 +23,13 @@ from fastapi import FastAPI
 from loguru import logger
 from strawberry.fastapi import GraphQLRouter
 
-from business_backend.api.graphql.queries import BusinessQuery
-from business_backend.container import create_business_container
+from backend.api.graphql.queries import BusinessQuery
+from backend.container import create_business_container
 
 
 def create_business_backend_app() -> FastAPI:
     """
-    Create independent FastAPI application for business_backend.
+    Create independent FastAPI application for backend.
 
     Returns:
         FastAPI application with GraphQL endpoint

@@ -18,12 +18,12 @@ from typing import Any
 import aioinject
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from business_backend.config import get_business_settings
-from business_backend.database.session import get_session_factory
-from business_backend.llm.provider import LLMProvider, create_llm_provider
-from business_backend.services.product_service import ProductService
-from business_backend.services.search_service import SearchService
-from business_backend.services.tenant_data_service import TenantDataService
+from backend.config import get_business_settings
+from backend.database.session import get_session_factory
+from backend.llm.provider import LLMProvider, create_llm_provider
+from backend.services.product_service import ProductService
+from backend.services.search_service import SearchService
+from backend.services.tenant_data_service import TenantDataService
 
 
 async def create_tenant_data_service() -> TenantDataService:
@@ -92,7 +92,7 @@ async def create_search_service(
 
 def providers() -> Iterable[aioinject.Provider[Any]]:
     """
-    Create and return all dependency injection providers for business_backend.
+    Create and return all dependency injection providers for backend.
 
     Includes:
     - TenantDataService: Reads tenant data from CSV files

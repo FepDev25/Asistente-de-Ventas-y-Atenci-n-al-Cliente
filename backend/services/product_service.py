@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from business_backend.database.models import ProductStock
+from backend.database.models import ProductStock
 
 
 class ProductService:

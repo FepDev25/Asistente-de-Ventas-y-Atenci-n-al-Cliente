@@ -9,13 +9,13 @@ from dataclasses import dataclass
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
 
-from business_backend.database.models import ProductStock
-from business_backend.llm.provider import LLMProvider
-from business_backend.llm.tools.product_search_tool import (
+from backend.database.models import ProductStock
+from backend.llm.provider import LLMProvider
+from backend.llm.tools.product_search_tool import (
     ProductSearchTool,
     create_product_search_tool,
 )
-from business_backend.services.product_service import ProductService
+from backend.services.product_service import ProductService
 
 
 @dataclass

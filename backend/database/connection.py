@@ -9,7 +9,7 @@ import functools
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine as sa_create_async_engine
 from sqlalchemy.pool import NullPool
 
-from business_backend.config import get_business_settings
+from backend.config import get_business_settings
 
 
 def create_async_engine(database_url: str) -> AsyncEngine:

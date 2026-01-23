@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from business_backend.database.connection import get_engine
+from backend.database.connection import get_engine
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:

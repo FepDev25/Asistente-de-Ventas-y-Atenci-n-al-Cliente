@@ -12,16 +12,16 @@ from aioinject import Inject
 from aioinject.ext.strawberry import inject
 from loguru import logger
 
-from business_backend.api.graphql.types import (
+from backend.api.graphql.types import (
     FAQ,
     Document,
     ProductStockType,
     ProductSummaryType,
     SemanticSearchResponse,
 )
-from business_backend.services.product_service import ProductService
-from business_backend.services.search_service import SearchService
-from business_backend.services.tenant_data_service import TenantDataService
+from backend.services.product_service import ProductService
+from backend.services.search_service import SearchService
+from backend.services.tenant_data_service import TenantDataService
 
 
 @strawberry.type
