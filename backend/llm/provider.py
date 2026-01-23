@@ -7,7 +7,7 @@ Simple OpenAI provider using LangChain for tool calling.
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
-from business_backend.config import get_business_settings
+from backend.config import get_business_settings
 
 
 class LLMProvider:

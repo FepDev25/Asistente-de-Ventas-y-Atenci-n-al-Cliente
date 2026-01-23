@@ -2,7 +2,7 @@
 Service for reading tenant data from CSV files.
 
 This service loads FAQs and context chunks from CSV files stored in
-business_backend/data/{tenant}/ directory.
+backend/data/{tenant}/ directory.
 """
 
 from pathlib import Path
@@ -10,12 +10,24 @@ from pathlib import Path
 import pandas as pd
 from loguru import logger
 
-from agent.domain.faq_data_models import (
-    DocumentChunk,
-    FAQData,
-    FAQItemData,
-    FAQResponses,
-)
+#from agent.domain.faq_data_models import (
+#    DocumentChunk,
+#    FAQData,
+#    FAQItemData,
+#    FAQResponses,
+#)
+
+class DocumentChunk:
+    pass
+
+class FAQResponses:
+    pass
+
+class FAQItemData:
+    pass
+
+class FAQData:
+    pass
 
 
 class TenantDataService:

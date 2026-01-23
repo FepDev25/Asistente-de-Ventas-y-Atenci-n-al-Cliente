@@ -10,8 +10,8 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from business_backend.database.models import ProductStock
-from business_backend.services.product_service import ProductService
+from backend.database.models import ProductStock
+from backend.services.product_service import ProductService
 
 
 class ProductSearchInput(BaseModel):
