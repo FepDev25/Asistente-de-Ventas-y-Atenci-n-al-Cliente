@@ -1,1 +1,5 @@
 .env
+env/
+.venv/
+venv/
+arch-dev-agent-87f23e12bec3.json
