@@ -5,7 +5,7 @@ FastAPI base project with PostgreSQL database, LLM integration, and ML capabilit
 ## Structure
 
 ```
-business_backend/
+backend/
 ├── main.py                 # FastAPI app entry point
 ├── container.py            # Dependency Injection (aioinject)
 │
@@ -64,7 +64,7 @@ LLM_ENABLED=true   # Set to false to disable LLM
 ## Run
 
 ```bash
-poetry run python -m business_backend.main --port 9000
+poetry run python -m backend.main --port 9000
 ```
 
 - GraphiQL UI: http://localhost:9000/graphql
@@ -126,7 +126,7 @@ class MyService:
 
 ```python
 # container.py
-from business_backend.services.my_service import MyService
+from backend.services.my_service import MyService
 
 async def create_my_service(session_factory) -> MyService:
     return MyService(session_factory)
@@ -156,7 +156,7 @@ async def my_query(
 ```python
 # database/models/my_model.py
 from sqlalchemy.orm import Mapped, mapped_column
-from business_backend.database.models.product_stock import Base
+from backend.database.models.product_stock import Base
 
 class MyModel(Base):
     __tablename__ = "my_table"
@@ -170,7 +170,7 @@ class MyModel(Base):
 
 ```python
 # database/models/__init__.py
-from business_backend.database.models.my_model import MyModel
+from backend.database.models.my_model import MyModel
 ```
 
 ## Removing LLM Module
@@ -193,8 +193,8 @@ The `semanticSearch` query will use fallback (direct DB search).
 
 ```python
 # Remove these lines:
-from business_backend.llm.provider import LLMProvider, create_llm_provider
-from business_backend.services.search_service import SearchService
+from backend.llm.provider import LLMProvider, create_llm_provider
+from backend.services.search_service import SearchService
 
 # Remove these providers:
 # providers_list.append(aioinject.Singleton(create_llm_provider_instance))
@@ -292,7 +292,7 @@ The `ml/` module provides ML capabilities for preprocessing, inference, and trai
 
 ```python
 # ml/models/my_model.py
-from business_backend.ml.models.base import BaseModel
+from backend.ml.models.base import BaseModel
 
 class MyModel(BaseModel):
     model_type: str = "image"  # or "text", "tabular"
@@ -311,7 +311,7 @@ class MyModel(BaseModel):
 
 ```python
 # ml/preprocessing/my_preprocessor.py
-from business_backend.ml.preprocessing.base import BasePreprocessor
+from backend.ml.preprocessing.base import BasePreprocessor
 
 class MyPreprocessor(BasePreprocessor):
     async def process(self, data):
@@ -330,9 +330,9 @@ class MyPreprocessor(BasePreprocessor):
 #### 3. Register and Use
 
 ```python
-from business_backend.ml.models.registry import ModelRegistry, ModelStage
-from business_backend.ml.models.my_model import MyModel
-from business_backend.ml.serving.inference_service import InferenceService
+from backend.ml.models.registry import ModelRegistry, ModelStage
+from backend.ml.models.my_model import MyModel
+from backend.ml.serving.inference_service import InferenceService
 
 # Register
 registry = ModelRegistry()
@@ -351,8 +351,8 @@ result = await service.predict("my_model", input_data)
 ### Training a Model
 
 ```python
-from business_backend.ml.training.trainer import Trainer, TrainConfig
-from business_backend.ml.training.experiment_tracker import ExperimentTracker
+from backend.ml.training.trainer import Trainer, TrainConfig
+from backend.ml.training.experiment_tracker import ExperimentTracker
 
 # Setup
 tracker = ExperimentTracker(artifact_location="./experiments")

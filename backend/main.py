@@ -5,13 +5,13 @@ This service provides GraphQL API for FAQs and Documents from CSV files.
 Runs independently on port 9000 (configurable).
 
 Architecture:
-- Reads tenant data from CSV files (business_backend/data/{tenant}/)
+- Reads tenant data from CSV files (backend/data/{tenant}/)
 - Exposes data via GraphQL queries (getFaqs, getDocuments)
 - Completely independent from agent service
 - No database access - stateless data provider
 
 Usage:
-    poetry run python -m business_backend.main --port 9000
+    poetry run python -m backend.main --port 9000
 """
 
 import argparse
@@ -27,7 +27,7 @@ from backend.api.graphql.queries import BusinessQuery
 from backend.container import create_business_container
 
 
-def create_business_backend_app() -> FastAPI:
+def create_backend_app() -> FastAPI:
     """
     Create independent FastAPI application for backend.
 
@@ -42,7 +42,7 @@ def create_business_backend_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # Create business_backend's own DI container
+    # Create backend's own DI container
     container = create_business_container()
     logger.info("✅ Business Backend DI container created")
 
@@ -50,7 +50,7 @@ def create_business_backend_app() -> FastAPI:
     schema = strawberry.Schema(
         query=BusinessQuery,
         extensions=[
-            AioInjectExtension(container),  # Uses business_backend's container
+            AioInjectExtension(container),  # Uses backend's container
         ],
     )
     logger.info("✅ Business Backend GraphQL schema created")
@@ -68,7 +68,7 @@ def create_business_backend_app() -> FastAPI:
         """Health check for business backend service."""
         return {
             "status": "ok",
-            "service": "business_backend",
+            "service": "backend",
             "version": "1.0.0",
         }
 
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    app = create_business_backend_app()
+    app = create_backend_app()
 
     # Extract args with explicit types
     host: str = args.host

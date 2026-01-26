@@ -1,10 +1,10 @@
 """
 Dependency Injection Container for Business Backend.
 
-This container manages services for the business_backend system,
+This container manages services for the backend system,
 which is independent from the agent's container.
 
-The business_backend is responsible for:
+The backend is responsible for:
 - Reading tenant data from CSV files
 - Exposing data via GraphQL API
 - Database access for product_stocks table
@@ -119,7 +119,7 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
 @functools.cache
 def create_business_container() -> aioinject.Container:
     """
-    Create and configure the business_backend DI container.
+    Create and configure the backend DI container.
 
     This container is completely independent from the agent's container.
 

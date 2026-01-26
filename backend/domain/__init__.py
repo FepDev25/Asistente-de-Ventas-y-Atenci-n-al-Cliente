@@ -1,6 +1,6 @@
 """Business Backend Domain Models."""
 
-from business_backend.domain.product_schemas import (
+from backend.domain.product_schemas import (
     ProductStockSchema,
     ProductStockSummary,
     SearchRequest,

@@ -1,7 +1,7 @@
 """Business Backend Services."""
 
-from business_backend.services.product_service import ProductService
-from business_backend.services.search_service import SearchService
-from business_backend.services.tenant_data_service import TenantDataService
+from backend.services.product_service import ProductService
+from backend.services.search_service import SearchService
+from backend.services.tenant_data_service import TenantDataService
 
 __all__ = ["ProductService", "SearchService", "TenantDataService"]

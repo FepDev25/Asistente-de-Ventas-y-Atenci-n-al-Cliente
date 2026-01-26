@@ -53,7 +53,7 @@ class TenantDataService:
         Raises:
             FileNotFoundError: If CSV file doesn't exist
         """
-        csv_path = Path(f"business_backend/data/{tenant}/faqs.csv")
+        csv_path = Path(f"backend/data/{tenant}/faqs.csv")
 
         if not csv_path.exists():
             raise FileNotFoundError(f"FAQs CSV not found: {csv_path}")
@@ -139,7 +139,7 @@ class TenantDataService:
         Raises:
             FileNotFoundError: If CSV file doesn't exist
         """
-        csv_path = Path(f"business_backend/data/{tenant}/chunks.csv")
+        csv_path = Path(f"backend/data/{tenant}/chunks.csv")
 
         if not csv_path.exists():
             raise FileNotFoundError(f"Chunks CSV not found: {csv_path}")

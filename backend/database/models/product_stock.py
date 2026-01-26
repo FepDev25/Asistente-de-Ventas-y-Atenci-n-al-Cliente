@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, SmallInteger, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -33,19 +33,19 @@ class ProductStock(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default="gen_random_uuid()",
+        server_default=text("gen_random_uuid()"),
     )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        server_default="now()",
+        server_default=text("now()"),
     )
     last_updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     # Product identification
