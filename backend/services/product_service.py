@@ -1,139 +1,80 @@
 """
-Product Service for Business Backend.
-
-Provides CRUD operations for ProductStock using SQLAlchemy ORM.
+Servicio de Gestión de Productos (Inventario).
+se conecta el Agente con la Base de Datos Real.
 """
-
 from uuid import UUID
-
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from backend.database.models import ProductStock
 
-
 class ProductService:
-    """Service for product stock operations."""
-
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        """
-        Initialize ProductService.
-
-        Args:
-            session_factory: Async session factory for database operations
-        """
+        # Inyectamos la fábrica de sesiones para conectar a la DB
         self.session_factory = session_factory
 
-    async def list_products(
-        self,
-        limit: int = 50,
-        offset: int = 0,
-        active_only: bool = True,
-    ) -> list[ProductStock]:
+    async def search_by_name(self, name: str) -> list[ProductStock]:
         """
-        List products with pagination.
-
-        Args:
-            limit: Maximum number of products to return
-            offset: Number of products to skip
-            active_only: If True, only return active products
-
-        Returns:
-            List of ProductStock instances
+        Busca productos por nombre o palabras clave.
+        Usado por la Tool: 'consultar_inventario'.
         """
+        from loguru import logger
+        from sqlalchemy import or_
+        logger.info(f"🗃️ ProductService: Buscando en DB '{name}'")
+        
         async with self.session_factory() as session:
-            query = select(ProductStock)
-
-            if active_only:
-                query = query.where(ProductStock.is_active == True)  # noqa: E712
-
-            query = query.order_by(ProductStock.product_name).limit(limit).offset(offset)
-
-            result = await session.execute(query)
-            return list(result.scalars().all())
-
-    async def get_product(self, product_id: UUID) -> ProductStock | None:
-        """
-        Get a single product by ID.
-
-        Args:
-            product_id: UUID of the product
-
-        Returns:
-            ProductStock instance or None if not found
-        """
-        async with self.session_factory() as session:
-            query = select(ProductStock).where(ProductStock.id == product_id)
-            result = await session.execute(query)
-            return result.scalar_one_or_none()
-
-    async def search_by_name(
-        self,
-        name: str,
-        limit: int = 20,
-        active_only: bool = True,
-    ) -> list[ProductStock]:
-        """
-        Search products by name (case-insensitive).
-
-        Args:
-            name: Search term for product name
-            limit: Maximum number of results
-            active_only: If True, only return active products
-
-        Returns:
-            List of matching ProductStock instances
-        """
-        async with self.session_factory() as session:
+            # Búsqueda inteligente: dividir el término en palabras y buscar cada una
+            search_words = name.lower().split()
+            
+            # Crear condiciones OR para cada palabra
+            conditions = []
+            for word in search_words:
+                # Buscar en product_name y product_sku
+                conditions.append(ProductStock.product_name.ilike(f"%{word}%"))
+                conditions.append(ProductStock.product_sku.ilike(f"%{word}%"))
+            
             query = select(ProductStock).where(
-                ProductStock.product_name.ilike(f"%{name}%")
-            )
-
-            if active_only:
-                query = query.where(ProductStock.is_active == True)  # noqa: E712
-
-            query = query.order_by(ProductStock.product_name).limit(limit)
-
+                or_(*conditions),
+                ProductStock.is_active == True
+            ).limit(10)
+            
+            logger.info(f"🗃️ Palabras de búsqueda: {search_words}")
             result = await session.execute(query)
-            return list(result.scalars().all())
+            products = list(result.scalars().all())
+            logger.info(f"🗃️ ProductService: Encontrados {len(products)} productos en DB")
+            
+            return products
 
-    async def get_low_stock_products(self, limit: int = 50) -> list[ProductStock]:
+    async def process_order(self, product_name: str, quantity: int) -> str:
         """
-        Get products with stock below reorder point.
-
-        Args:
-            limit: Maximum number of results
-
-        Returns:
-            List of ProductStock instances with low stock
+        Procesa la venta: Valida stock y lo descuenta.
+        Usado por la Tool: 'crear_pedido'.
         """
         async with self.session_factory() as session:
-            query = (
-                select(ProductStock)
-                .where(ProductStock.is_active == True)  # noqa: E712
-                .where(ProductStock.quantity_available <= ProductStock.reorder_point)
-                .order_by(ProductStock.quantity_available)
-                .limit(limit)
+            # buscar el producto exacto (o el más parecido)
+            query = select(ProductStock).where(
+                ProductStock.product_name.ilike(f"%{product_name}%")
             )
-
             result = await session.execute(query)
-            return list(result.scalars().all())
+            product = result.scalars().first()
 
-    async def count_products(self, active_only: bool = True) -> int:
-        """
-        Count total products.
+            # Validación 1: existencia
+            if not product:
+                return f"Error: No encontré el producto '{product_name}'."
 
-        Args:
-            active_only: If True, only count active products
+            # Validación 2: stock suficiente
+            if product.quantity_available < quantity:
+                return f"Stock insuficiente. Solo quedan {product.quantity_available} unidades de {product.product_name}."
 
-        Returns:
-            Total count of products
-        """
-        async with self.session_factory() as session:
-            query = select(func.count(ProductStock.id))
+            # 2. Ejecutar la transacción (descontar)
+            product.quantity_available -= quantity
+            
+            await session.commit()
 
-            if active_only:
-                query = query.where(ProductStock.is_active == True)  # noqa: E712
-
-            result = await session.execute(query)
-            return result.scalar_one()
+            total = product.unit_cost * quantity
+            return (
+                f"¡VENTA EXITOSA!\n"
+                f"Producto: {product.product_name}\n"
+                f"Cantidad: {quantity}\n"
+                f"Total: ${total:.2f}\n"
+                f"Stock restante: {product.quantity_available}"
+            )

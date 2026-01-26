@@ -1,186 +1,110 @@
 """
-Search Service for Business Backend.
-
-Orchestrates LLM with product search tool for semantic queries.
+El Cerebro del Agente (Search Service).
+Orquesta a 'Alex' (LLM) con las herramientas de inventario y pedidos.
 """
-
 from dataclasses import dataclass
-
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 from loguru import logger
-
-from backend.database.models import ProductStock
-from backend.llm.provider import LLMProvider
-from backend.llm.tools.product_search_tool import (
-    ProductSearchTool,
-    create_product_search_tool,
-)
 from backend.services.product_service import ProductService
-
+# Asegúrate de importar tus nuevas tools aquí
+from backend.llm.tools import create_product_search_tool, create_order_tool 
 
 @dataclass
 class SearchResult:
-    """Result from semantic search."""
-
     answer: str
-    products_found: list[ProductStock]
-    query: str
-
 
 class SearchService:
-    """Service for semantic search using LLM and product database."""
+    # EL PROMPT DE PERSONALIDAD (Rol 1)
+    SYSTEM_PROMPT = """ERES UN VENDEDOR EXPERTO DE ZAPATILLAS, NO UN ASISTENTE. TU NOMBRE ES 'ALEX'.
+    Tu objetivo es CERRAR VENTAS.
 
-    SYSTEM_PROMPT = """You are a helpful inventory assistant. You help users find products and check stock availability.
+    REGLAS DE COMPORTAMIENTO:
+    1. PERSUASIÓN: Si el usuario duda del precio, justifica con calidad y beneficios a largo plazo.
+    2. URGENCIA: Menciona sutilmente que el stock es limitado si el usuario muestra interés.
+    3. CROSS-SELLING: Si compran zapatos, sugiere calcetines o limpiadores.
+    4. CIERRE: Siempre termina tus respuestas invitando a la compra. Ej: "¿Te los envío hoy mismo?".
+    5. Responde SIEMPRE en Español.
 
-When a user asks about products or stock, use the product_search tool to find information in the database.
+    NO HAGAS:
+    - No seas pasivo ("¿En qué te ayudo?"). Sé proactivo ("Tengo una oferta para ti").
+    - No inventes stock. Usa las herramientas para verificar disponibilidad.
+    - No des respuestas vagas. Sé específico y directo.
 
-Always provide clear, concise answers about:
-- Whether the product exists
-- How many units are available
-- The product's stock status (In Stock, Low Stock, Out of Stock)
-- Price and supplier information when relevant
+    REGLAS DE HERRAMIENTAS:
+    - Si el usuario pregunta por Nike, usa 'product_search' con término "Nike" (NO "zapatillas Nike para correr").
+    - Si preguntan por Adidas, busca "Adidas". Si es para running, busca "running" o la marca específica.
+    - USA TÉRMINOS SIMPLES: "Nike", "Adidas", "Puma", "running", "basketball", "casual".
+    - Si el usuario dice "Lo quiero", "Dame 2", "Me lo llevo", usa 'order_tool' de inmediato.
+    - Sé persuasivo pero honesto con el stock disponible.
+    """
 
-If no products are found, let the user know politely and suggest they try a different search term.
-
-Respond in the same language as the user's query."""
-
-    def __init__(
-        self,
-        llm_provider: LLMProvider | None,
-        product_service: ProductService,
-    ) -> None:
-        """
-        Initialize SearchService.
-
-        Args:
-            llm_provider: LLM provider (can be None if disabled)
-            product_service: ProductService for database queries
-        """
+    def __init__(self, llm_provider, product_service: ProductService):
         self.llm_provider = llm_provider
-        self.product_service = product_service
-        self.search_tool: ProductSearchTool | None = None
-
-        if llm_provider is not None:
+        
+        # Inicializamos las herramientas
+        if llm_provider:
             self.search_tool = create_product_search_tool(product_service)
+            self.order_tool = create_order_tool(product_service) # nueva tool
+            # Lista completa de capacidades
+            self.tools = [self.search_tool, self.order_tool]
 
     async def semantic_search(self, query: str) -> SearchResult:
-        """
-        Perform semantic search using LLM with product search tool.
+        """Recibe el texto del usuario y devuelve la respuesta de Alex."""
+        
+        # configurar el modelo con las herramientas (Bind)
+        model_with_tools = self.llm_provider.bind_tools(self.tools)
 
-        Args:
-            query: User's natural language query
-
-        Returns:
-            SearchResult with answer and found products
-        """
-        if self.llm_provider is None or self.search_tool is None:
-            # Fallback: direct search without LLM
-            logger.warning("LLM not configured, using fallback search")
-            return await self._fallback_search(query)
-
-        try:
-            return await self._llm_search(query)
-        except Exception as e:
-            logger.error(f"LLM search failed: {e}")
-            return await self._fallback_search(query)
-
-    async def _llm_search(self, query: str) -> SearchResult:
-        """Perform search using LLM with tool calling."""
-        assert self.llm_provider is not None
-        assert self.search_tool is not None
-
-        # Bind tool to model
-        model_with_tools = self.llm_provider.bind_tools([self.search_tool])
-
-        # Create messages
+        # historial básico de mensajes
         messages = [
             {"role": "system", "content": self.SYSTEM_PROMPT},
             {"role": "user", "content": query},
         ]
 
-        # First LLM call - may request tool use
+        # primera llamada al LLM (¿Qué debo hacer?)
         response = await model_with_tools.ainvoke(messages)
 
-        # Check if tool was called
+        # ¿El LLM quiere usar una herramienta?
         if hasattr(response, "tool_calls") and response.tool_calls:
-            # Execute tool calls
             tool_messages = []
+            
             for tool_call in response.tool_calls:
+                logger.info(f"Alex usa herramienta: {tool_call['name']}")
+                
+                # Selector de Herramientas
                 if tool_call["name"] == "product_search":
-                    # Execute the search
-                    tool_result = await self.search_tool._arun(
-                        tool_call["args"]["search_term"]
-                    )
-                    tool_messages.append(
-                        ToolMessage(
-                            content=tool_result,
-                            tool_call_id=tool_call["id"],
-                        )
-                    )
+                    # Ejecuta búsqueda
+                    result = await self.search_tool.ainvoke(tool_call["args"])
+                elif tool_call["name"] == "order_tool":
+                    # Ejecuta venta
+                    result = await self.order_tool.ainvoke(tool_call["args"])
+                
+                # Guardamos el resultado como mensaje de herramienta
+                tool_messages.append(
+                    ToolMessage(content=str(result), tool_call_id=tool_call["id"])
+                )
 
-            # Second LLM call with tool results
-            messages_with_tools = [
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": query},
-                response,  # AI message with tool calls
-                *tool_messages,  # Tool results
-            ]
+            # segunda llamada al LLM (Generar respuesta final con los datos)
+            # se pasa: [Prompt, Usuario, Intención AI, Resultado Tool]
+            messages_final = messages + [response] + tool_messages
+            final_response = await model_with_tools.ainvoke(messages_final)
+            return SearchResult(answer=self._extract_text_content(final_response.content))
 
-            final_response = await model_with_tools.ainvoke(messages_with_tools)
-            answer = (
-                final_response.content
-                if isinstance(final_response.content, str)
-                else str(final_response.content)
-            )
-        else:
-            # No tool call, use direct response
-            answer = (
-                response.content
-                if isinstance(response.content, str)
-                else str(response.content)
-            )
-
-        return SearchResult(
-            answer=answer,
-            products_found=self.search_tool.get_last_results(),
-            query=query,
-        )
-
-    async def _fallback_search(self, query: str) -> SearchResult:
-        """
-        Fallback search without LLM.
-
-        Extracts keywords from query and searches directly.
-        """
-        # Simple keyword extraction (just use the query as search term)
-        # In production, you might want more sophisticated NLP
-        search_term = query.strip()
-
-        # Remove common question words
-        for word in ["tienen", "hay", "existe", "buscar", "quiero", "stock", "?", "¿"]:
-            search_term = search_term.lower().replace(word, "")
-        search_term = search_term.strip()
-
-        if not search_term:
-            return SearchResult(
-                answer="Por favor, especifica el producto que buscas.",
-                products_found=[],
-                query=query,
-            )
-
-        products = await self.product_service.search_by_name(search_term, limit=10)
-
-        if not products:
-            answer = f"No encontré productos que coincidan con '{search_term}'."
-        else:
-            product_list = ", ".join(
-                f"{p.product_name} ({p.quantity_available} disponibles)"
-                for p in products[:5]
-            )
-            answer = f"Encontré {len(products)} producto(s): {product_list}"
-
-        return SearchResult(
-            answer=answer,
-            products_found=products,
-            query=query,
-        )
+        # Si no usó herramientas, devolvemos la respuesta directa (Charla)
+        return SearchResult(answer=self._extract_text_content(response.content))
+    
+    def _extract_text_content(self, content) -> str:
+        """Extrae el contenido de texto de la respuesta del LLM, manejando diferentes formatos."""
+        # Si es un string simple, lo devolvemos tal como está
+        if isinstance(content, str):
+            return content
+        
+        # Si es una lista de objetos con formato [{'type': 'text', 'text': '...'}]
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get('type') == 'text' and 'text' in item:
+                    text_parts.append(item['text'])
+            return ' '.join(text_parts) if text_parts else str(content)
+        
+        # Si es otro tipo de objeto, convertirlo a string
+        return str(content)
