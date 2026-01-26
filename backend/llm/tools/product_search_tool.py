@@ -1,117 +1,69 @@
 """
-Product Search Tool for LangChain.
-
-This tool allows the LLM to search products in the database.
-Uses ProductService with SQLAlchemy ORM.
+Herramienta de Búsqueda (backend/llm/tools/product_search_tool.py).
+Conecta la función 'consultar_inventario' con la base de datos real.
 """
-
-from typing import Any
-
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-
-from backend.database.models import ProductStock
 from backend.services.product_service import ProductService
 
-
+# Esquema de entrada (Lo que Gemini debe enviar)
 class ProductSearchInput(BaseModel):
-    """Input schema for product search tool."""
-
     search_term: str = Field(
-        description="The product name or keyword to search for in the database"
+        description="Marca o palabra clave del producto (ej: 'Nike', 'Adidas', 'running', 'zapatos'). Evita frases largas, usa términos simples."
     )
-
 
 class ProductSearchTool(BaseTool):
-    """
-    LangChain tool for searching products in the database.
-
-    Uses ProductService to query the product_stocks table via SQLAlchemy ORM.
-    """
-
-    name: str = "product_search"
+    name: str = "product_search" # Este nombre usa Gemini para llamarla
     description: str = (
-        "Searches for products in the inventory database by name. "
-        "Use this tool when the user asks about product availability, "
-        "stock levels, or wants to find a specific product. "
-        "Returns product information including name, quantity available, "
-        "stock status, price, and supplier."
+        "Busca productos en el inventario. Usa palabras clave simples como 'Nike', 'Adidas', 'running', 'zapatos'. "
+        "NO uses frases largas como 'zapatillas Nike para correr en asfalto' - mejor usa solo 'Nike' o 'Nike running'. "
+        "Retorna precio, stock y ubicación de productos que coincidan."
     )
     args_schema: type[BaseModel] = ProductSearchInput
-
-    # Service reference (set during initialization)
+    
+    # Inyección del servicio (Tu conexión a la DB)
     product_service: ProductService | None = None
 
-    # Store last search results for the response
-    last_results: list[ProductStock] = []
-
-    model_config = {"arbitrary_types_allowed": True}
-
     def _run(self, search_term: str) -> str:
-        """Sync version - not used, raises error."""
-        raise NotImplementedError("Use async version")
+        raise NotImplementedError("Usar versión asíncrona (ainvoke)")
 
     async def _arun(self, search_term: str) -> str:
         """
-        Async search for products by name.
-
-        Args:
-            search_term: Product name or keyword to search
-
-        Returns:
-            Formatted string with product information
+        Lógica interna de la herramienta.
         """
-        if self.product_service is None:
-            return "Error: Product service not configured"
+        from loguru import logger
+        logger.info(f"🔍 ProductSearchTool: Buscando '{search_term}'")
+        
+        if not self.product_service:
+            return "Error: Servicio de base de datos no conectado."
 
-        products = await self.product_service.search_by_name(name=search_term, limit=10)
-
-        # Store results for later use
-        self.last_results = products
+        # Llamamos a tu servicio real (product_service.py)
+        products = await self.product_service.search_by_name(search_term)
+        
+        logger.info(f"🔍 ProductSearchTool: Encontrados {len(products)} productos")
+        for p in products:
+            logger.info(f"🔍 Producto: {p.product_name}")
 
         if not products:
-            return f"No products found matching '{search_term}'"
+            return f"No encontré productos que coincidan con '{search_term}'."
 
-        # Format results for LLM
+        # Formato de respuesta para que 'Alex' lo lea
         results = []
         for p in products:
-            status_text = self._get_stock_status_text(p.stock_status)
-            results.append(
-                f"- {p.product_name} (SKU: {p.product_sku or 'N/A'}): "
-                f"{p.quantity_available} units available, "
-                f"Status: {status_text}, "
-                f"Price: ${p.unit_cost:.2f}, "
-                f"Supplier: {p.supplier_name}, "
-                f"Location: {p.warehouse_location}"
+            estado = "En Stock" if p.quantity_available > 0 else "Agotado"
+            
+            info = (
+                f"{p.product_name} | "
+                f"Precio: ${p.unit_cost:.2f} | "
+                f"Stock: {p.quantity_available} ({estado}) | "
+                f"Ubicación: {p.warehouse_location}"
             )
+            results.append(info)
 
-        return f"Found {len(products)} products:\n" + "\n".join(results)
-
-    def _get_stock_status_text(self, status: int) -> str:
-        """Convert stock status code to text."""
-        status_map = {
-            0: "Out of Stock",
-            1: "In Stock",
-            2: "Low Stock",
-            3: "Overstock",
-        }
-        return status_map.get(status, "Unknown")
-
-    def get_last_results(self) -> list[ProductStock]:
-        """Get the last search results."""
-        return self.last_results
-
+        return "\n".join(results)
 
 def create_product_search_tool(product_service: ProductService) -> ProductSearchTool:
-    """
-    Create a product search tool with the given service.
-
-    Args:
-        product_service: ProductService instance for database queries
-
-    Returns:
-        Configured ProductSearchTool
-    """
+    """Factory para inyectar el servicio."""
     tool = ProductSearchTool()
     tool.product_service = product_service
     return tool

@@ -1,8 +1,7 @@
 """LangChain Tools for Business Backend."""
 
-from backend.llm.tools.product_search_tool import (
-    ProductSearchTool,
-    create_product_search_tool,
-)
+# Usamos import relativo (.) para evitar errores de nombres de carpetas
+from .product_search_tool import create_product_search_tool
+from .order_tool import create_order_tool  # <--- Agregamos esto
 
-__all__ = ["ProductSearchTool", "create_product_search_tool"]
+__all__ = ["create_product_search_tool", "create_order_tool"]
