@@ -29,13 +29,12 @@ def create_async_engine(database_url: str) -> AsyncEngine:
     )
 
 
-@functools.cache
 def get_engine() -> AsyncEngine:
     """
-    Get cached async engine using settings.
+    Get async engine using settings.
 
     Returns:
-        Cached AsyncEngine instance
+        AsyncEngine instance
     """
     settings = get_business_settings()
     return create_async_engine(str(settings.pg_url))
