@@ -1,21 +1,8 @@
 """
-Business Backend - Independent FastAPI Application.
-
-This service provides GraphQL API for FAQs and Documents from CSV files.
-Runs independently on port 9000 (configurable).
-
-Architecture:
-- Reads tenant data from CSV files (backend/data/{tenant}/)
-- Exposes data via GraphQL queries (getFaqs, getDocuments)
-- Completely independent from agent service
-- No database access - stateless data provider
-
-Usage:
-    poetry run python -m backend.main --port 9000
+Punto de Entrada de la Aplicación (Main).
+Arranca el servidor web (FastAPI) y la API GraphQL.
 """
-
-import argparse
-
+import dotenv
 import strawberry
 import uvicorn
 from aioinject.ext.strawberry import AioInjectExtension
@@ -23,101 +10,58 @@ from fastapi import FastAPI
 from loguru import logger
 from strawberry.fastapi import GraphQLRouter
 
+# Cargar variables de entorno al inicio
+dotenv.load_dotenv()
+
+# Importamos tu esquema limpio
 from backend.api.graphql.queries import BusinessQuery
 from backend.container import create_business_container
 
-
-def create_backend_app() -> FastAPI:
-    """
-    Create independent FastAPI application for backend.
-
-    Returns:
-        FastAPI application with GraphQL endpoint
-    """
+def create_app() -> FastAPI:
+    """Crea y configura la aplicación FastAPI."""
+    
+    # 1. Configuración Básica
     app = FastAPI(
-        title="Business Backend API",
-        description="Provides FAQs and Documents from CSV files via GraphQL",
+        title="Agente de Ventas API",
+        description="API GraphQL para el Asistente de Ventas con IA (Alex).",
         version="1.0.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
     )
 
-    # Create backend's own DI container
+    # 2. Iniciar el Contenedor de Servicios
     container = create_business_container()
-    logger.info("✅ Business Backend DI container created")
+    logger.info("Contenedor de servicios iniciado correctamente.")
 
-    # Create GraphQL schema with BusinessQuery as root
+    # 3. Configurar GraphQL
+    # Creamos el esquema con tus Queries
     schema = strawberry.Schema(
         query=BusinessQuery,
-        extensions=[
-            AioInjectExtension(container),  # Uses backend's container
-        ],
+        extensions=[AioInjectExtension(container=container)], # Conecta la inyección de dependencias
     )
-    logger.info("✅ Business Backend GraphQL schema created")
 
-    # Add GraphQL router
-    graphql_app = GraphQLRouter(
-        schema,
-        graphiql=True,  # Enable GraphiQL interface
-    )
+    # Creamos la ruta /graphql
+    graphql_app = GraphQLRouter(schema)
     app.include_router(graphql_app, prefix="/graphql")
-
-    # Health check endpoint
-    @app.get("/health")
-    async def health():
-        """Health check for business backend service."""
-        return {
-            "status": "ok",
-            "service": "backend",
-            "version": "1.0.0",
-        }
 
     @app.get("/")
     async def root():
-        """Root endpoint with service information."""
+        """Endpoint de bienvenida."""
         return {
-            "service": "Business Backend API",
-            "version": "1.0.0",
-            "graphql_endpoint": "/graphql",
-            "graphiql_ui": "/graphql (browser)",
-            "health_check": "/health",
-            "docs": "/docs",
+            "mensaje": "Bienvenido al Backend del Agente de Ventas",
+            "playground": "Ve a /graphql para probar el chat",
+            "docs": "/docs"
         }
 
-    logger.info("✅ Business Backend FastAPI app created")
     return app
 
-
+# Bloque de ejecución principal
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Business Backend Service")
-    _ = parser.add_argument(
-        "--port",
-        type=int,
-        default=9000,
-        help="Port to run business backend on (default: 9000)",
-    )
-    _ = parser.add_argument(
-        "--host",
-        type=str,
-        default="0.0.0.0",
-        help="Host to bind to (default: 0.0.0.0)",
-    )
-
-    args = parser.parse_args()
-
-    app = create_backend_app()
-
-    # Extract args with explicit types
-    host: str = args.host
-    port: int = args.port
-
-    logger.info(f"🚀 Starting Business Backend on {host}:{port}")
-    logger.info(f"📊 GraphiQL UI: http://localhost:{port}/graphql")
-    logger.info(f"📖 API Docs: http://localhost:{port}/docs")
-
+    logger.info("Arrancando servidor en http://0.0.0.0:8000")
+    
+    # Ejecuta uvicorn directamente
     uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info",
+        "backend.main:create_app", # Apunta a la función factoría
+        host="0.0.0.0",
+        port=8000,
+        reload=True, # Reload=True es vital para desarrollar (recarga si cambias código)
+        factory=True 
     )
