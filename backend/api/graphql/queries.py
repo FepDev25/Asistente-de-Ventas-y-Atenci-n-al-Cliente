@@ -31,8 +31,6 @@ class BusinessQuery:
         logger.info(f"GraphQL: Listando {limit} productos")
         
         # Usamos servicio limpio de ProductService
-        # (Nota: Asumimos que agregas un método 'list_all' o usas 'search_by_name' vacío)
-        # Para la demo, podemos usar search_by_name con string vacío para traer todo
         products = await product_service.search_by_name("") 
         
         return [
