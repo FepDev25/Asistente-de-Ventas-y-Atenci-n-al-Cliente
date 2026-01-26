@@ -1,24 +1,18 @@
 """
-Dependency Injection Container for Business Backend.
-
-This container manages services for the backend system,
-which is independent from the agent's container.
-
-The backend is responsible for:
-- Reading tenant data from CSV files
-- Exposing data via GraphQL API
-- Database access for product_stocks table
-- LLM integration for semantic search (optional)
+Contenedor de Inyección de Dependencias.
+Aquí es donde "fabricamos" y conectamos todos los servicios de la aplicación.
 """
-
 import functools
+import dotenv
 from collections.abc import Iterable
 from typing import Any
 
 import aioinject
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.config import get_business_settings
+# Cargar variables de entorno al inicio del container
+dotenv.load_dotenv()
+
 from backend.database.session import get_session_factory
 from backend.llm.provider import LLMProvider, create_llm_provider
 from backend.services.product_service import ProductService
@@ -27,105 +21,52 @@ from backend.services.tenant_data_service import TenantDataService
 
 
 async def create_tenant_data_service() -> TenantDataService:
-    """
-    Factory function for TenantDataService singleton.
-
-    TenantDataService has no dependencies - it only reads CSV files.
-
-    Returns:
-        TenantDataService instance
-    """
+    """Fabrica el servicio de lectura de CSVs (RAG)."""
     return TenantDataService()
 
-
 async def create_session_factory() -> async_sessionmaker[AsyncSession]:
-    """
-    Factory function for database session factory.
-
-    Returns:
-        async_sessionmaker for creating database sessions
-    """
+    """Fabrica el creador de sesiones de base de datos."""
     return get_session_factory()
-
 
 async def create_product_service(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> ProductService:
-    """
-    Factory function for ProductService.
-
-    Args:
-        session_factory: Database session factory
-
-    Returns:
-        ProductService instance
-    """
+    """Fabrica el servicio de inventario conectándolo a la DB."""
     return ProductService(session_factory)
 
-
-async def create_llm_provider_instance() -> LLMProvider | None:
-    """
-    Factory function for LLM provider.
-
-    Returns:
-        LLMProvider instance or None if disabled
-    """
+async def create_llm_provider_instance() -> LLMProvider:
+    """Fabrica el proveedor de IA (Gemini)."""
     return create_llm_provider()
 
-
 async def create_search_service(
-    llm_provider: LLMProvider | None,
+    llm_provider: LLMProvider,
     product_service: ProductService,
 ) -> SearchService:
     """
-    Factory function for SearchService.
-
-    Args:
-        llm_provider: LLM provider (can be None)
-        product_service: ProductService for database queries
-
-    Returns:
-        SearchService instance
+    Fabrica el 'Cerebro' (SearchService).
+    Le inyecta el LLM (Alex) y el acceso a Productos (Inventario).
     """
     return SearchService(llm_provider, product_service)
 
 
 def providers() -> Iterable[aioinject.Provider[Any]]:
-    """
-    Create and return all dependency injection providers for backend.
-
-    Includes:
-    - TenantDataService: Reads tenant data from CSV files
-    - ProductService: CRUD operations for product_stocks
-    - LLMProvider: OpenAI via LangChain (optional)
-    - SearchService: Semantic search with LLM
-    """
+    """Lista de instrucciones para crear todos los servicios."""
     providers_list: list[aioinject.Provider[Any]] = []
 
-    # Core services (always available)
+    # 1. Servicios de Datos
     providers_list.append(aioinject.Singleton(create_tenant_data_service))
-
-    # Database
     providers_list.append(aioinject.Singleton(create_session_factory))
     providers_list.append(aioinject.Singleton(create_product_service))
 
-    # LLM (optional - can return None)
+    # 2. Servicios de IA
     providers_list.append(aioinject.Singleton(create_llm_provider_instance))
     providers_list.append(aioinject.Singleton(create_search_service))
 
     return providers_list
 
 
-@functools.cache
 def create_business_container() -> aioinject.Container:
-    """
-    Create and configure the backend DI container.
-
-    This container is completely independent from the agent's container.
-
-    Returns:
-        Configured aioinject.Container instance
-    """
+    """Crea el contenedor final con todas las dependencias."""
     container = aioinject.Container()
     for provider in providers():
         container.register(provider)
