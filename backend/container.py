@@ -18,6 +18,7 @@ from backend.llm.provider import LLMProvider, create_llm_provider
 from backend.services.product_service import ProductService
 from backend.services.search_service import SearchService
 from backend.services.tenant_data_service import TenantDataService
+from backend.services.rag_service import RAGService
 
 
 async def create_tenant_data_service() -> TenantDataService:
@@ -38,15 +39,20 @@ async def create_llm_provider_instance() -> LLMProvider:
     """Fabrica el proveedor de IA (Gemini)."""
     return create_llm_provider()
 
+async def create_rag_service() -> RAGService:
+    """Fabrica el servicio RAG (búsqueda semántica)."""
+    return RAGService()
+
 async def create_search_service(
     llm_provider: LLMProvider,
     product_service: ProductService,
+    rag_service: RAGService,
 ) -> SearchService:
     """
     Fabrica el 'Cerebro' (SearchService).
-    Le inyecta el LLM (Alex) y el acceso a Productos (Inventario).
+    Le inyecta el LLM (Alex), el acceso a Productos (Inventario) y el RAG.
     """
-    return SearchService(llm_provider, product_service)
+    return SearchService(llm_provider, product_service, rag_service)
 
 
 def providers() -> Iterable[aioinject.Provider[Any]]:
@@ -60,6 +66,7 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
 
     # 2. Servicios de IA
     providers_list.append(aioinject.Singleton(create_llm_provider_instance))
+    providers_list.append(aioinject.Singleton(create_rag_service))
     providers_list.append(aioinject.Singleton(create_search_service))
 
     return providers_list

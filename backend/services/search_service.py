@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from langchain_core.messages import ToolMessage
 from loguru import logger
 from backend.services.product_service import ProductService
+from backend.services.rag_service import RAGService
 # Asegúrate de importar tus nuevas tools aquí
-from backend.llm.tools import create_product_search_tool, create_order_tool 
+from backend.llm.tools import create_product_search_tool, create_order_tool
+from backend.llm.tools.rag_tool import create_rag_tool 
 
 @dataclass
 class SearchResult:
@@ -38,15 +40,17 @@ class SearchService:
     - Sé persuasivo pero honesto con el stock disponible.
     """
 
-    def __init__(self, llm_provider, product_service: ProductService):
+    def __init__(self, llm_provider, product_service: ProductService, rag_service: RAGService):
         self.llm_provider = llm_provider
         
         # Inicializamos las herramientas
         if llm_provider:
             self.search_tool = create_product_search_tool(product_service)
-            self.order_tool = create_order_tool(product_service) # nueva tool
+            self.order_tool = create_order_tool(product_service)
+            self.rag_tool = create_rag_tool(rag_service)  # Nueva herramienta RAG
+            
             # Lista completa de capacidades
-            self.tools = [self.search_tool, self.order_tool]
+            self.tools = [self.search_tool, self.order_tool, self.rag_tool]
 
     async def semantic_search(self, query: str) -> SearchResult:
         """Recibe el texto del usuario y devuelve la respuesta de Alex."""
@@ -72,11 +76,14 @@ class SearchService:
                 
                 # Selector de Herramientas
                 if tool_call["name"] == "product_search":
-                    # Ejecuta búsqueda
+                    # Ejecuta búsqueda de productos
                     result = await self.search_tool.ainvoke(tool_call["args"])
                 elif tool_call["name"] == "order_tool":
                     # Ejecuta venta
                     result = await self.order_tool.ainvoke(tool_call["args"])
+                elif tool_call["name"] == "knowledge_search":
+                    # Ejecuta búsqueda en RAG
+                    result = await self.rag_tool.ainvoke(tool_call["args"])
                 
                 # Guardamos el resultado como mensaje de herramienta
                 tool_messages.append(

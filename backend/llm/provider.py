@@ -2,6 +2,7 @@
 Proveedor de LLM (backend/llm/provider.py).
 Usa ChatVertexAI como indicaste.
 """
+import os
 from langchain_google_vertexai import ChatVertexAI
 from backend.config import get_business_settings
 
@@ -12,13 +13,12 @@ class LLMProvider:
     def __init__(self) -> None:
         settings = get_business_settings()
 
-        # Usamos la clase que tú indicaste
+        # Usar ChatVertexAI (usa GOOGLE_APPLICATION_CREDENTIALS de env)
         self.model = ChatVertexAI(
             model="gemini-2.5-flash",
             temperature=0.7,
-            project=settings.google_cloud_project, # Toma el ID de .env
-            location=settings.google_location,      # us-central1
-            convert_system_message_to_human=True    # Ayuda con la compatibilidad de roles
+            project=settings.google_cloud_project,
+            location=settings.google_location,
         )
 
     def bind_tools(self, tools: list):
