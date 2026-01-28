@@ -6,31 +6,18 @@ import os
 import sys
 from pathlib import Path
 
-# CRÍTICO: Establecer credenciales ANTES de cualquier import de Google
 # Cargar dotenv primero para leer el .env
 import dotenv
 
-# Cargar .env desde backend/ (donde está el archivo)
-env_path = Path(__file__).parent / ".env"
-dotenv.load_dotenv(dotenv_path=env_path)
-
-# Leer la ruta de credenciales del .env directamente
-credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-if credentials_path:
-    # Establecer la variable de entorno para que google.auth.default() la encuentre
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
-    print(f"✅ Credenciales configuradas: {credentials_path}", file=sys.stderr)
-else:
-    print(f"⚠️  GOOGLE_APPLICATION_CREDENTIALS no encontrado en {env_path}", file=sys.stderr)
-    print(f"⚠️  Variables de entorno cargadas: {list(os.environ.keys())[:10]}", file=sys.stderr)
-
-# Ahora sí podemos importar el resto
 import strawberry
 import uvicorn
 from aioinject.ext.strawberry import AioInjectExtension
 from fastapi import FastAPI
 from loguru import logger
 from strawberry.fastapi import GraphQLRouter
+
+dotenv.load_dotenv(dotenv.find_dotenv())
+
 from backend.config import get_business_settings
 
 # Importamos tu esquema limpio
