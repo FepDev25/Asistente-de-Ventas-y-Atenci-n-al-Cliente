@@ -10,7 +10,6 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,7 +23,6 @@ const Login: React.FC = () => {
 
     try {
       setIsLoading(true);
-      await login(email, password);
       navigate('/tienda');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Error al iniciar sesión');

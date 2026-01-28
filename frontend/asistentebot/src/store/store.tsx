@@ -15,7 +15,6 @@ const Store: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [cartCount, setCartCount] = useState(0);
   
-  const { user, logout } = useAuth();
 
   useEffect(() => {
     loadProducts();
@@ -73,14 +72,14 @@ const Store: React.FC = () => {
         <div className="header-content">
           <div className="header-left">
             <h1>Mi Tienda</h1>
-            <p>Hola, {user?.name}</p>
+            <p>Hola</p>
           </div>
           <div className="header-right">
             <button className="cart-button">
               <FiShoppingCart size={24} />
               {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
             </button>
-            <button className="logout-button" onClick={logout}>
+            <button className="logout-button">
               <FiLogOut size={24} />
             </button>
           </div>
