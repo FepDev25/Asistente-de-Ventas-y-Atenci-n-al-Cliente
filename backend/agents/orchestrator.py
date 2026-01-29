@@ -2,7 +2,10 @@
 Orquestador de Agentes - Coordina el flujo entre múltiples agentes.
 """
 from typing import Optional, Dict
+import json
+import asyncio
 from loguru import logger
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from backend.agents.base import BaseAgent
 from backend.agents.retriever_agent import RetrieverAgent
@@ -35,6 +38,7 @@ class AgentOrchestrator:
         sales_agent: SalesAgent,
         checkout_agent: CheckoutAgent,
         llm_provider: LLMProvider,
+        use_llm_detection: bool = True,  # ✨ NUEVO: Usar LLM para detección
     ):
         self.agents: Dict[str, BaseAgent] = {
             "retriever": retriever_agent,
@@ -42,7 +46,13 @@ class AgentOrchestrator:
             "checkout": checkout_agent,
         }
         self.llm_provider = llm_provider
-        logger.info("AgentOrchestrator inicializado con 3 agentes")
+        self.use_llm_detection = use_llm_detection
+
+        detection_method = "LLM Zero-shot" if use_llm_detection else "Keywords"
+        logger.info(
+            f"AgentOrchestrator inicializado con 3 agentes "
+            f"(Detección: {detection_method})"
+        )
 
     async def process_query(
         self, query: str, session_state: Optional[AgentState] = None
@@ -63,18 +73,29 @@ class AgentOrchestrator:
 
         # Detectar estilo de usuario si no está definido
         if not state.user_style or state.user_style == "neutral":
-            style_profile = await self._detect_user_style(state)
+            # Usar detección LLM o Keywords según configuración
+            if self.use_llm_detection:
+                style_profile = await self._detect_user_style_llm(state)
+            else:
+                style_profile = await self._detect_user_style_keywords(state)
+
             state.user_style = style_profile.style
             logger.info(
-                f"Estilo detectado: {state.user_style} (confianza: {style_profile.confidence})"
+                f"Estilo detectado: {state.user_style} (confianza: {style_profile.confidence:.2f})"
             )
 
         # Detectar intención si no está en checkout
         if state.checkout_stage is None:
-            intent = await self._classify_intent(state)
+            # Usar detección LLM o Keywords según configuración
+            if self.use_llm_detection:
+                intent = await self._classify_intent_llm(state)
+            else:
+                intent = await self._classify_intent_keywords(state)
+
             state.detected_intent = intent.intent
             logger.info(
-                f"Intención detectada: {intent.intent} -> Agente: {intent.suggested_agent}"
+                f"Intención detectada: {intent.intent} -> Agente: {intent.suggested_agent} "
+                f"(confianza: {intent.confidence:.2f})"
             )
             current_agent_name = intent.suggested_agent
         else:
@@ -120,11 +141,282 @@ class AgentOrchestrator:
         )
         return response
 
-    async def _classify_intent(
+    # DETECCIÓN INTELIGENTE CON LLM ZERO-SHOT
+
+    async def _classify_intent_llm(
         self, state: AgentState
     ) -> IntentClassification:
         """
-        Clasifica la intención del usuario usando lógica de reglas.
+        Clasifica la intención del usuario usando LLM Zero-shot (Gemini).
+
+        Ventajas sobre keywords:
+        - Entiende contexto y negaciones
+        - Maneja sinónimos automáticamente
+        - Detecta intenciones complejas
+
+        Fallback a keywords si LLM falla.
+        """
+        try:
+            # Construir prompt para clasificación
+            system_prompt = """Eres un clasificador de intenciones para un sistema de ventas de calzado deportivo.
+
+Tu tarea es clasificar la intención del usuario en UNA de estas 4 categorías:
+
+1. **search**: El usuario quiere buscar o explorar productos
+   - Ejemplos: "busco Nike", "tienes Adidas?", "mostrame zapatillas", "hay talla 42?"
+
+2. **persuasion**: El usuario tiene dudas, objeciones o necesita recomendaciones
+   - Ejemplos: "están caros", "cual es mejor?", "no sé cual elegir", "vale la pena?"
+
+3. **checkout**: El usuario quiere comprar o confirmar un pedido
+   - Ejemplos: "los quiero", "dámelos", "envíamelos", "confirmo", "procede"
+
+4. **info**: El usuario pide información general (horarios, políticas, ubicación)
+   - Ejemplos: "que horarios tienen?", "hacen envíos?", "donde están?", "garantía?"
+
+IMPORTANTE:
+- Analiza el CONTEXTO completo, no solo palabras clave
+- Si el usuario tiene productos previos vistos, favorece persuasion/checkout
+- Si dice "NO busco X", NO es search
+- Considera negaciones y el tono
+
+Responde SOLO con un JSON válido en este formato:
+{
+  "intent": "search" | "persuasion" | "checkout" | "info",
+  "confidence": 0.0 a 1.0,
+  "reasoning": "Breve explicación de por qué elegiste esta intención"
+}"""
+
+            # Construir contexto
+            context_parts = [f'Query del usuario: "{state.user_query}"']
+
+            # Agregar contexto de búsquedas previas
+            if state.search_results and len(state.search_results) > 0:
+                context_parts.append(
+                    f"\nCONTEXTO: El usuario ya vio {len(state.search_results)} productos."
+                )
+
+            # Agregar historial reciente
+            if state.conversation_history:
+                recent = state.conversation_history[-3:]
+                history_text = "\n".join(
+                    [
+                        f"- {msg['role']}: {msg['content']}"
+                        for msg in recent
+                    ]
+                )
+                context_parts.append(
+                    f"\nHISTORIAL RECIENTE:\n{history_text}"
+                )
+
+            user_prompt = "\n".join(context_parts)
+
+            # Llamar a Gemini con timeout
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+
+            logger.debug("Llamando a LLM para clasificar intención...")
+
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=5.0,  # 5 segundos máximo
+            )
+
+            # Parsear respuesta JSON
+            response_text = response.content.strip()
+
+            # Limpiar markdown si existe
+            if response_text.startswith("```json"):
+                response_text = response_text.split("```json")[1]
+            if response_text.endswith("```"):
+                response_text = response_text.rsplit("```", 1)[0]
+
+            result = json.loads(response_text.strip())
+
+            # Validar campos
+            intent = result.get("intent", "persuasion")
+            if intent not in ["search", "persuasion", "checkout", "info"]:
+                logger.warning(f"Intención inválida del LLM: {intent}")
+                intent = "persuasion"
+
+            confidence = float(result.get("confidence", 0.8))
+            reasoning = result.get("reasoning", "LLM classification")
+
+            # Mapear intención a agente
+            intent_to_agent = {
+                "search": "retriever",
+                "persuasion": "sales",
+                "checkout": "checkout",
+                "info": "sales",
+            }
+
+            logger.info(
+                f"LLM clasificó como '{intent}' (confianza: {confidence:.2f}): {reasoning}"
+            )
+
+            return IntentClassification(
+                intent=intent,
+                confidence=confidence,
+                suggested_agent=intent_to_agent[intent],
+                reasoning=reasoning,
+            )
+
+        except asyncio.TimeoutError:
+            logger.warning("LLM timeout en clasificación de intención, usando keywords")
+            return await self._classify_intent_keywords(state)
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Error parseando JSON del LLM: {e}, usando keywords"
+            )
+            return await self._classify_intent_keywords(state)
+
+        except Exception as e:
+            logger.error(
+                f"Error en clasificación LLM: {str(e)}, usando keywords",
+                exc_info=True,
+            )
+            return await self._classify_intent_keywords(state)
+
+    async def _detect_user_style_llm(
+        self, state: AgentState
+    ) -> UserStyleProfile:
+        """
+        Detecta el estilo de comunicación del usuario usando LLM Zero-shot.
+
+        Ventajas sobre patterns:
+        - Detecta tono sin palabras clave específicas
+        - Analiza estructura de oraciones
+        - Entiende formalidad contextual
+
+        Fallback a patterns si LLM falla.
+        """
+        try:
+            # Construir prompt para análisis de estilo
+            system_prompt = """Eres un analista de estilo de comunicación para un sistema de ventas.
+
+Tu tarea es identificar el estilo de comunicación del usuario analizando sus mensajes.
+
+Los 4 estilos son:
+
+1. **cuencano**: Modismos ecuatorianos, tono cercano y amigable
+   - Indicadores: "ayayay", "ve", "full", "chevere", "lindo", "pana"
+   - Ejemplo: "Ayayay que lindo ve, busco unos Nike full buenos"
+
+2. **juvenil**: Lenguaje casual, energético, jerga argentina/latina
+   - Indicadores: "che", "bro", "tipo", "re", "mal", "onda", "copado"
+   - Ejemplo: "Che bro, mostrame algo copado tipo para correr"
+
+3. **formal**: Lenguaje profesional, educado, trato de usted
+   - Indicadores: "usted", "señor", "por favor", "disculpe", "quisiera", "agradezco"
+   - Ejemplo: "Buenos días, quisiera consultar por zapatillas deportivas"
+
+4. **neutral**: Lenguaje estándar, sin marcadores claros de estilo
+   - Tuteo normal, sin modismos ni formalidad excesiva
+   - Ejemplo: "Hola, busco zapatillas Nike para correr"
+
+IMPORTANTE:
+- Analiza el TONO general, no solo palabras clave
+- Considera: vocabulario, nivel de formalidad, estructura de oraciones
+- Un solo mensaje puede no ser suficiente, considera el contexto
+- Si no hay señales claras, es "neutral"
+
+Responde SOLO con un JSON válido en este formato:
+{
+  "style": "cuencano" | "juvenil" | "formal" | "neutral",
+  "confidence": 0.0 a 1.0,
+  "reasoning": "Explicación breve de los indicadores detectados"
+}"""
+
+            # Recopilar mensajes del usuario
+            user_messages = [
+                msg["content"]
+                for msg in state.conversation_history[-5:]
+                if msg["role"] == "user"
+            ]
+            user_messages.append(state.user_query)
+
+            # Construir contexto
+            messages_text = "\n".join(
+                [f"{i+1}. \"{msg}\"" for i, msg in enumerate(user_messages)]
+            )
+
+            user_prompt = f"""Analiza el estilo de comunicación en estos mensajes del usuario:
+
+{messages_text}
+
+Determina el estilo predominante basándote en el tono, vocabulario y estructura."""
+
+            # Llamar a Gemini con timeout
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+
+            logger.debug("Llamando a LLM para detectar estilo...")
+
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=5.0,
+            )
+
+            # Parsear respuesta JSON
+            response_text = response.content.strip()
+
+            # Limpiar markdown
+            if response_text.startswith("```json"):
+                response_text = response_text.split("```json")[1]
+            if response_text.endswith("```"):
+                response_text = response_text.rsplit("```", 1)[0]
+
+            result = json.loads(response_text.strip())
+
+            # Validar campos
+            style = result.get("style", "neutral")
+            if style not in ["cuencano", "juvenil", "formal", "neutral"]:
+                logger.warning(f"Estilo inválido del LLM: {style}")
+                style = "neutral"
+
+            confidence = float(result.get("confidence", 0.8))
+            reasoning = result.get("reasoning", "LLM analysis")
+
+            logger.info(
+                f"LLM detectó estilo '{style}' (confianza: {confidence:.2f}): {reasoning}"
+            )
+
+            return UserStyleProfile(
+                style=style,
+                confidence=confidence,
+                detected_patterns=[reasoning],
+                sample_messages=user_messages[-3:],
+            )
+
+        except asyncio.TimeoutError:
+            logger.warning("LLM timeout en detección de estilo, usando patterns")
+            return await self._detect_user_style_keywords(state)
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Error parseando JSON del LLM: {e}, usando patterns"
+            )
+            return await self._detect_user_style_keywords(state)
+
+        except Exception as e:
+            logger.error(
+                f"Error en detección de estilo LLM: {str(e)}, usando patterns",
+                exc_info=True,
+            )
+            return await self._detect_user_style_keywords(state)
+
+    # DETECCIÓN LEGACY CON KEYWORDS/PATTERNS (FALLBACK)
+
+    async def _classify_intent_keywords(
+        self, state: AgentState
+    ) -> IntentClassification:
+        """
+        Clasifica la intención del usuario usando keywords (método legacy).
 
         Intenciones:
         - search: Buscar productos
@@ -248,11 +540,11 @@ class AgentOrchestrator:
             reasoning=f"Keyword matches: {max_intent}={max_score}",
         )
 
-    async def _detect_user_style(
+    async def _detect_user_style_keywords(
         self, state: AgentState
     ) -> UserStyleProfile:
         """
-        Detecta el estilo de comunicación del usuario.
+        Detecta el estilo de comunicación del usuario usando patterns (método legacy).
 
         Estilos:
         - cuencano: Modismos ecuatorianos (ayayay, ve, full, lindo)
