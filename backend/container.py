@@ -19,6 +19,10 @@ from backend.services.product_service import ProductService
 from backend.services.search_service import SearchService
 from backend.services.tenant_data_service import TenantDataService
 from backend.services.rag_service import RAGService
+from backend.agents.retriever_agent import RetrieverAgent
+from backend.agents.sales_agent import SalesAgent
+from backend.agents.checkout_agent import CheckoutAgent
+from backend.agents.orchestrator import AgentOrchestrator
 
 
 async def create_tenant_data_service() -> TenantDataService:
@@ -44,15 +48,51 @@ async def create_rag_service() -> RAGService:
     return RAGService()
 
 async def create_search_service(
-    llm_provider: LLMProvider,
-    product_service: ProductService,
-    rag_service: RAGService,
+    orchestrator: AgentOrchestrator,
 ) -> SearchService:
     """
     Fabrica el 'Cerebro' (SearchService).
-    Le inyecta el LLM (Alex), el acceso a Productos (Inventario) y el RAG.
+    Ahora delega al AgentOrchestrator que coordina múltiples agentes.
     """
-    return SearchService(llm_provider, product_service, rag_service)
+    return SearchService(orchestrator)
+
+
+# === Agentes del Sistema Multi-Agente ===
+
+
+async def create_retriever_agent(
+    product_service: ProductService,
+    rag_service: RAGService,
+) -> RetrieverAgent:
+    """Fabrica el Agente Buscador (búsqueda SQL rápida)."""
+    return RetrieverAgent(product_service, rag_service)
+
+
+async def create_sales_agent(
+    llm_provider: LLMProvider,
+    rag_service: RAGService,
+) -> SalesAgent:
+    """Fabrica el Agente Vendedor (persuasión con LLM)."""
+    return SalesAgent(llm_provider, rag_service)
+
+
+async def create_checkout_agent(
+    product_service: ProductService,
+) -> CheckoutAgent:
+    """Fabrica el Agente Cajero (checkout con lógica dura)."""
+    return CheckoutAgent(product_service)
+
+
+async def create_orchestrator(
+    retriever_agent: RetrieverAgent,
+    sales_agent: SalesAgent,
+    checkout_agent: CheckoutAgent,
+    llm_provider: LLMProvider,
+) -> AgentOrchestrator:
+    """Fabrica el Orquestador de Agentes."""
+    return AgentOrchestrator(
+        retriever_agent, sales_agent, checkout_agent, llm_provider
+    )
 
 
 def providers() -> Iterable[aioinject.Provider[Any]]:
@@ -68,6 +108,12 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     providers_list.append(aioinject.Singleton(create_llm_provider_instance))
     providers_list.append(aioinject.Singleton(create_rag_service))
     providers_list.append(aioinject.Singleton(create_search_service))
+
+    # 3. Sistema Multi-Agente
+    providers_list.append(aioinject.Singleton(create_retriever_agent))
+    providers_list.append(aioinject.Singleton(create_sales_agent))
+    providers_list.append(aioinject.Singleton(create_checkout_agent))
+    providers_list.append(aioinject.Singleton(create_orchestrator))
 
     return providers_list
 
