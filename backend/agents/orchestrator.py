@@ -71,6 +71,19 @@ class AgentOrchestrator:
         state = session_state or AgentState(user_query=query)
         state.user_query = query
 
+        # DETECCIÓN DE STOP INTENT (ANTES de procesar con agentes)
+        stop_intent_detected, stop_message = self._detect_stop_intent(state)
+        if stop_intent_detected:
+            logger.info(f"Stop intent detectado: {query}")
+            # Retornar mensaje de despedida directamente
+            return AgentResponse(
+                agent_name="orchestrator",
+                message=stop_message,
+                state=state,
+                should_transfer=False,
+                metadata={"stop_intent": True}
+            )
+
         # Detectar estilo de usuario si no está definido
         if not state.user_style or state.user_style == "neutral":
             # Usar detección LLM o Keywords según configuración
@@ -409,6 +422,58 @@ Determina el estilo predominante basándote en el tono, vocabulario y estructura
                 exc_info=True,
             )
             return await self._detect_user_style_keywords(state)
+
+    # DETECCIÓN DE STOP INTENT (CANCELACIÓN)
+
+    def _detect_stop_intent(self, state: AgentState) -> tuple[bool, str]:
+        """
+        Detecta si el usuario quiere cancelar o salir de la conversación.
+
+        Returns:
+            (stop_detected: bool, farewell_message: str)
+        """
+        query_lower = state.user_query.lower().strip()
+
+        # Patrones de cancelación/salida
+        stop_patterns = [
+            "mejor no",
+            "mejor no gracias",
+            "luego veo",
+            "después veo",
+            "chao",
+            "adiós",
+            "adios",
+            "nos vemos",
+            "hasta luego",
+            "bye",
+            "gracias igual",
+            "gracias igualmente",
+            "ya no",
+            "no importa",
+            "déjalo",
+            "dejalo",
+            "olvídalo",
+            "olvidalo",
+            "no gracias",
+            "está muy caro gracias",
+            "esta muy caro gracias",
+            "muy caro gracias",
+        ]
+
+        # Detectar patrones
+        for pattern in stop_patterns:
+            if pattern in query_lower:
+                # Generar mensaje de despedida según estilo
+                style = state.user_style or "neutral"
+                farewell_messages = {
+                    "cuencano": "Entendido ve. Aquí estaré si cambias de opinión. ¡Buen día!",
+                    "juvenil": "Ok bro, acá estoy por si cambias de idea. ¡Saludos!",
+                    "formal": "Entendido. Quedo a su disposición. ¡Que tenga un buen día!",
+                    "neutral": "Entendido. Aquí estaré si cambias de opinión. ¡Buen día!",
+                }
+                return True, farewell_messages.get(style, farewell_messages["neutral"])
+
+        return False, ""
 
     # DETECCIÓN LEGACY CON KEYWORDS/PATTERNS (FALLBACK)
 

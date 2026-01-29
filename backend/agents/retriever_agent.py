@@ -160,6 +160,13 @@ class RetrieverAgent(BaseAgent):
                 for p in available_products
             ]
             state.detected_intent = "search"
+
+            # Actualizar slots si encontramos productos
+            if available_products and "discussed_products" not in state.conversation_slots:
+                product_names = [p.product_name for p in available_products[:3]]
+                state.conversation_slots["discussed_products"] = ", ".join(product_names)
+                logger.debug(f"Slot 'discussed_products' actualizado: {product_names}")
+
         except Exception as e:
             logger.error(f"Error serializando productos: {str(e)}")
             # Continuar con lista vacía

@@ -21,6 +21,13 @@ class AgentState(BaseModel):
     search_results: Optional[List[Dict[str, Any]]] = None
     selected_products: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Slot Filling - Información ya obtenida del usuario
+    conversation_slots: Dict[str, Any] = Field(default_factory=dict)
+    # Slots posibles: product_name, size, color, activity_type, terrain_type, etc.
+
+    # Contador de preguntas sin respuesta
+    unanswered_question_count: int = 0
+
     # Estado de carrito temporal
     cart_items: List[Dict[str, Any]] = Field(default_factory=list)
     cart_total: float = 0.0

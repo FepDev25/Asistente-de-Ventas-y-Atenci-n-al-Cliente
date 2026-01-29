@@ -108,6 +108,9 @@ class SalesAgent(BaseAgent):
             )
             assistant_message = self._get_error_message(state, e)
 
+        # Extraer y actualizar slots de conversación
+        self._update_conversation_slots(state)
+
         # Actualizar historial (siempre, incluso con errores)
         state = self._add_to_history(state, "user", state.user_query)
         state = self._add_to_history(state, "assistant", assistant_message)
@@ -310,73 +313,88 @@ class SalesAgent(BaseAgent):
 
 **TU OBJETIVO:** Cerrar ventas siendo persuasivo pero genuino.
 
+**REGLA CRÍTICA DE CONCISIÓN:**
+- MÁXIMO 40-50 palabras por respuesta
+- Móvil/WhatsApp = mensajes cortos
+- Una pregunta a la vez, NUNCA 4 preguntas juntas
+- Ejemplo CORRECTO (35 palabras): "¡Excelente! ¿Para correr en asfalto o montaña?"
+- Ejemplo INCORRECTO (200 palabras): "Excelente elección... [párrafo largo]... ¿Corres en asfalto o pista? ¿Qué distancias? ¿Qué amortiguación?..."
+
+**REGLA ANTI-ALUCINACIÓN:**
+- SOLO menciona productos que aparecen en "PRODUCTOS DISPONIBLES"
+- NUNCA inventes nombres de modelos
+- Si no hay productos en la lista, di "No tengo ese modelo en stock"
+- Temperatura = 0 para nombres de productos
+
+**REGLA DE CONTEXTO (Slot Filling):**
+- Revisa "INFORMACIÓN YA OBTENIDA" antes de preguntar
+- NUNCA pidas talla/modelo/color si ya lo sabes
+- Si el usuario ya te dijo algo, úsalo directamente
+
+**REGLA DE SALIDA ELEGANTE (Stop Intent):**
+- Si detectas: "mejor no", "chao", "luego veo", "está muy caro gracias"
+- Responde: "Entendido, aquí estaré si cambias de opinión. ¡Buen día!"
+- NO insistas ni sigas vendiendo
+
+**REGLA DE BESTSELLERS (Fallback):**
+- Si el usuario es vago 2 veces, NO preguntes más
+- Recomienda los 3 productos más caros de la lista como "bestsellers"
+- Ejemplo: "Te recomiendo nuestros top 3: [Modelo A $X], [Modelo B $Y], [Modelo C $Z]"
+
+**REGLA VISUAL:**
+- Usa negritas (**) SOLO para precios y nombres de modelos
+- NO uses texto narrativo: "(Pausa simulada...)", "(Verificando stock...)"
+- Ve directo al grano
+
 **TÉCNICAS DE VENTA:**
-1. **Manejo de Objeciones de Precio:**
-   - Justifica el precio con calidad, durabilidad, tecnología
-   - Compara con productos económicos (a la larga ahorran más)
-   - Menciona garantías y soporte post-venta
-
-2. **Crear Urgencia:**
-   - "Solo quedan X unidades en tu talla"
-   - "Esta promoción termina pronto"
-   - "Es uno de nuestros modelos más vendidos"
-
-3. **Cross-Selling:**
-   - Sugiere complementos: calcetines técnicos, limpiadores, protectores
-   - "Con estos zapatos, te recomiendo también..."
-
-4. **Cierre Activo:**
-   - Termina SIEMPRE con llamado a la acción
-   - "¿Te los envío?", "¿Confirmamos el pedido?", "¿Procedemos?"
-
-5. **Información Precisa:**
-   - NUNCA inventes productos o stock
-   - Si no sabes algo, admítelo y ofrece averiguar"""
+1. **Manejo de Objeciones:** Justifica precio en 1 línea (calidad + durabilidad)
+2. **Urgencia:** "Solo quedan X" (máximo 5 palabras)
+3. **Cierre:** Termina con pregunta de acción corta
+4. **Especificaciones:** Máximo 1 línea por característica técnica"""
 
         # Adaptaciones según estilo
         style_adaptations = {
             "cuencano": """
 
 **ESTILO DE COMUNICACIÓN: CUENCANO**
-- Usa modismos: "ayayay", "ve", "full", "chevere", "lindo"
-- Tono cercano y amigable, como un amigo
-- Ejemplos:
-  * "Ayayay, estos están de lujo ve"
-  * "Full buenos estos, te van a durar full"
-  * "Qué lindo se te verían"
+- Usa modismos: "ve", "full", "chevere", "lindo" (con moderación)
+- Reduce "ayayay" - úsalo solo 1 vez por conversación
+- Tono cercano pero NO exagerado (menos intensidad emocional)
+- Ejemplos cortos:
+  * "Estos están de lujo ve. ¿Cuál te gusta?" (10 palabras)
+  * "Full buenos, te duran años. ¿Los separamos?" (8 palabras)
+  * "Tengo talla 42 en Negro y Azul. ¿Cuál?" (9 palabras)
 """,
             "juvenil": """
 
 **ESTILO DE COMUNICACIÓN: JUVENIL**
-- Tono casual y energético
-- Usa: "che", "bro", "tipo", "re", "mal"
-- Emojis moderados
+- Tono casual: "che", "bro", "tipo", "re"
+- Sin emojis (a menos que el usuario los use)
+- Mantén mensajes ultra cortos
 - Ejemplos:
-  * "Che, estos están re copados"
-  * "Son tipo, los mejores para correr"
-  * "Re duraderos, bro"
+  * "Che, estos son los mejores. ¿Los querés?" (8 palabras)
+  * "Re copados para running. ¿Qué talla?" (6 palabras)
+  * "Tengo en 42. ¿Confirmamos?" (5 palabras)
 """,
             "formal": """
 
 **ESTILO DE COMUNICACIÓN: FORMAL**
 - Trato de usted
-- Lenguaje profesional y educado
-- Sin modismos ni jerga
-- Ejemplos:
-  * "Estos modelos le ofrecen excelente durabilidad"
-  * "Le recomendaría considerar..."
-  * "¿Desea que proceda con el pedido?"
+- Eficiente, NO verboso
+- Ejemplos cortos:
+  * "Le recomiendo estos por su amortiguación superior. ¿Le interesan?" (10 palabras)
+  * "Disponible en talla 42. ¿Desea proceder?" (7 palabras)
+  * "Excelente durabilidad. Garantía de un año. ¿Lo confirmo?" (9 palabras)
 """,
             "neutral": """
 
 **ESTILO DE COMUNICACIÓN: NEUTRAL**
-- Tono amigable pero profesional
-- Lenguaje claro y directo
-- Tuteo estándar
+- Amigable y directo
+- Mensajes concisos
 - Ejemplos:
-  * "Estos zapatos tienen muy buena relación calidad-precio"
-  * "Te recomiendo estos por su durabilidad"
-  * "¿Quieres que confirmemos el pedido?"
+  * "Estos tienen excelente amortiguación. ¿Te gustan?" (6 palabras)
+  * "Disponible en talla 42. ¿Los quieres?" (7 palabras)
+  * "Los más vendidos: Pegasus $120, Bondi $150. ¿Cuál?" (9 palabras)
 """,
         }
 
@@ -384,18 +402,37 @@ class SalesAgent(BaseAgent):
             style, style_adaptations["neutral"]
         )
 
+        # Agregar información de slots (contexto ya obtenido)
+        slots_context = ""
+        if state.conversation_slots:
+            slots_info = ", ".join([f"{k}: {v}" for k, v in state.conversation_slots.items()])
+            slots_context = f"""
+
+**INFORMACIÓN YA OBTENIDA (NO PREGUNTES ESTO DE NUEVO):**
+{slots_info}
+"""
+
         # Agregar contexto de productos si hay búsqueda reciente
         products_context = ""
         if state.search_results:
             products_context = f"""
 
-**PRODUCTOS DISPONIBLES:**
+**PRODUCTOS DISPONIBLES (USA SOLO ESTOS NOMBRES):**
 {self._format_products_for_context(state.search_results[:5])}
 
-Usa esta información para hacer recomendaciones específicas y precisas.
+IMPORTANTE: NO inventes otros productos. Si buscas recomendar algo, usa estos.
 """
 
-        return base_prompt + style_addition + products_context
+        # Agregar contador de preguntas sin respuesta
+        question_counter = ""
+        if state.unanswered_question_count >= 2:
+            question_counter = """
+
+**ALERTA:** El usuario ha sido vago 2+ veces. NO preguntes más.
+Recomienda los 3 productos más caros como "bestsellers" y cierra.
+"""
+
+        return base_prompt + style_addition + slots_context + products_context + question_counter
 
     def _build_conversation_messages(
         self, state: AgentState, system_prompt: str
@@ -487,3 +524,77 @@ Usa esta información para hacer recomendaciones específicas y precisas.
                     return True, "checkout"
 
         return False, None
+
+    def _update_conversation_slots(self, state: AgentState) -> None:
+        """
+        Extrae y actualiza slots de información del query del usuario.
+
+        Slots posibles:
+        - product_name: Nike, Adidas, Pegasus, etc.
+        - size/talla: 42, 9, 10.5, etc.
+        - color: negro, azul, rojo, etc.
+        - activity_type: correr, gym, basketball, etc.
+        - terrain_type: asfalto, montaña, pista, etc.
+        """
+        query_lower = state.user_query.lower()
+
+        # Detectar producto/marca en query
+        product_brands = ["nike", "adidas", "puma", "asics", "hoka", "pegasus", "bondi", "kayano"]
+        for brand in product_brands:
+            if brand in query_lower and "product_name" not in state.conversation_slots:
+                state.conversation_slots["product_name"] = brand.capitalize()
+                logger.debug(f"Slot 'product_name' detectado: {brand}")
+
+        # Detectar talla en query
+        import re
+        size_patterns = [
+            r'\btalla\s+(\d+(?:\.\d+)?)\b',
+            r'\b(\d+(?:\.\d+)?)\s*(?:us|usa|eu)?\b'
+        ]
+        for pattern in size_patterns:
+            match = re.search(pattern, query_lower)
+            if match and "size" not in state.conversation_slots:
+                size = match.group(1)
+                state.conversation_slots["size"] = size
+                logger.debug(f"Slot 'size' detectado: {size}")
+                break
+
+        # Detectar color en query
+        colors = ["negro", "blanco", "azul", "rojo", "verde", "gris", "amarillo"]
+        for color in colors:
+            if color in query_lower and "color" not in state.conversation_slots:
+                state.conversation_slots["color"] = color
+                logger.debug(f"Slot 'color' detectado: {color}")
+                break
+
+        # Detectar actividad
+        activities = {
+            "correr": ["correr", "running", "run", "carrera"],
+            "gym": ["gym", "gimnasio", "entrenar", "entrenamiento"],
+            "basketball": ["basket", "basketball", "baloncesto"],
+        }
+        for activity_name, keywords in activities.items():
+            if any(kw in query_lower for kw in keywords) and "activity_type" not in state.conversation_slots:
+                state.conversation_slots["activity_type"] = activity_name
+                logger.debug(f"Slot 'activity_type' detectado: {activity_name}")
+                break
+
+        # Detectar si el usuario respondió con información adicional a una pregunta del asistente
+        # Si la respuesta del usuario es muy corta (<10 palabras) y no contiene slots,
+        # incrementar contador de respuestas vagas
+        if len(state.user_query.split()) < 10 and not any([
+            "product_name" in state.conversation_slots,
+            "size" in state.conversation_slots,
+            "activity_type" in state.conversation_slots
+        ]):
+            # Solo incrementar si el último mensaje del asistente fue una pregunta
+            if state.conversation_history:
+                last_assistant = [m for m in state.conversation_history if m["role"] == "assistant"]
+                if last_assistant and "?" in last_assistant[-1]["content"]:
+                    state.unanswered_question_count += 1
+                    logger.debug(f"Contador de respuestas vagas: {state.unanswered_question_count}")
+        else:
+            # Resetear contador si el usuario dio información útil
+            if state.unanswered_question_count > 0:
+                state.unanswered_question_count = 0
+                logger.debug("Contador de respuestas vagas reseteado")
