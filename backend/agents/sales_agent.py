@@ -2,6 +2,7 @@
 Agente Vendedor - Persuasión y cierre de ventas con LLM.
 """
 from typing import List
+import asyncio
 from loguru import logger
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
@@ -62,39 +63,72 @@ class SalesAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AgentResponse:
         """
-        Procesa interacciones de venta con LLM.
+        Procesa interacciones de venta con LLM con manejo robusto de errores.
 
         Flujo:
         1. Detecta estilo de usuario (si no está detectado)
         2. Construye system prompt personalizado
         3. Consulta RAG si es necesario para info adicional
-        4. Genera respuesta persuasiva con LLM
+        4. Genera respuesta persuasiva con LLM (con timeout y retry)
         5. Detecta si debe transferir a Checkout
+
+        Error Handling:
+        - Timeout del LLM (>10s) → Mensaje de disculpa
+        - Error de conexión → Fallback gracioso
+        - Respuesta vacía → Mensaje genérico
         """
         logger.info(f"SalesAgent procesando: {state.user_query}")
 
-        # Construir system prompt adaptado al estilo del usuario
-        system_prompt = self._build_system_prompt(state)
+        try:
+            # Construir system prompt adaptado al estilo del usuario
+            system_prompt = self._build_system_prompt(state)
 
-        # Construir contexto de la conversación
-        messages = self._build_conversation_messages(state, system_prompt)
+            # Construir contexto de la conversación
+            messages = self._build_conversation_messages(state, system_prompt)
 
-        # Llamar al LLM (usar .model directamente)
-        response = await self.llm_provider.model.ainvoke(messages)
+            # Llamar al LLM con timeout y retry
+            assistant_message = await self._call_llm_with_retry(messages)
 
-        assistant_message = response.content
+            # Validar respuesta
+            if not assistant_message or len(assistant_message.strip()) == 0:
+                logger.warning("LLM retornó respuesta vacía")
+                assistant_message = self._get_fallback_message(state)
 
-        # Actualizar historial
+        except asyncio.TimeoutError:
+            logger.error(
+                "LLM timeout después de múltiples intentos",
+                exc_info=True
+            )
+            assistant_message = self._get_timeout_message(state)
+
+        except Exception as e:
+            logger.error(
+                f"Error inesperado en SalesAgent: {str(e)}",
+                exc_info=True
+            )
+            assistant_message = self._get_error_message(state, e)
+
+        # Actualizar historial (siempre, incluso con errores)
         state = self._add_to_history(state, "user", state.user_query)
         state = self._add_to_history(state, "assistant", assistant_message)
 
-        # Detectar si hay intención de compra (transferir a Checkout)
-        should_transfer, transfer_to = self._detect_checkout_intent(
-            state.user_query, assistant_message
-        )
+        # Detectar si hay intención de compra (solo si no es mensaje de error)
+        should_transfer = False
+        transfer_to = None
+
+        if not self._is_error_message(assistant_message):
+            try:
+                should_transfer, transfer_to = self._detect_checkout_intent(
+                    state.user_query, assistant_message
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error detectando intención de checkout: {str(e)}"
+                )
+                # No transferir si hay error
 
         logger.info(
-            f"SalesAgent - Transfer: {should_transfer} to {transfer_to}"
+            f"SalesAgent completado - Transfer: {should_transfer} to {transfer_to}"
         )
 
         return self._create_response(
@@ -103,6 +137,167 @@ class SalesAgent(BaseAgent):
             should_transfer=should_transfer,
             transfer_to=transfer_to,
         )
+
+    async def _call_llm_with_retry(
+        self, messages: List, max_retries: int = 2, timeout: float = 10.0
+    ) -> str:
+        """
+        Llama al LLM con retry logic y timeout.
+
+        Args:
+            messages: Mensajes para el LLM
+            max_retries: Número máximo de reintentos
+            timeout: Timeout en segundos por intento
+
+        Returns:
+            Respuesta del LLM
+
+        Raises:
+            asyncio.TimeoutError: Si todos los intentos fallan por timeout
+            Exception: Si hay otro error después de reintentos
+        """
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    logger.info(f"Reintento {attempt}/{max_retries} de llamada LLM")
+                    # Esperar antes de reintentar (exponential backoff)
+                    await asyncio.sleep(2 ** attempt)
+
+                # Llamar LLM con timeout
+                response = await asyncio.wait_for(
+                    self.llm_provider.model.ainvoke(messages),
+                    timeout=timeout
+                )
+
+                # Extraer contenido
+                content = response.content
+
+                # Validar que no esté vacío
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                else:
+                    logger.warning(f"LLM retornó contenido vacío en intento {attempt + 1}")
+                    last_error = ValueError("Empty response from LLM")
+                    continue
+
+            except asyncio.TimeoutError as e:
+                logger.warning(
+                    f"LLM timeout en intento {attempt + 1}/{max_retries + 1} "
+                    f"(timeout: {timeout}s)"
+                )
+                last_error = e
+                continue
+
+            except Exception as e:
+                logger.warning(
+                    f"Error en llamada LLM (intento {attempt + 1}/{max_retries + 1}): {str(e)}"
+                )
+                last_error = e
+                continue
+
+        # Si llegamos aquí, todos los intentos fallaron
+        if isinstance(last_error, asyncio.TimeoutError):
+            raise asyncio.TimeoutError(
+                f"LLM no respondió después de {max_retries + 1} intentos"
+            )
+        else:
+            raise last_error or Exception("LLM call failed after retries")
+
+    def _get_fallback_message(self, state: AgentState) -> str:
+        """Mensaje de fallback cuando LLM falla pero no es timeout."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, disculpa ve, tuve un problemita técnico. "
+                "¿Puedes repetir tu pregunta?"
+            ),
+            "juvenil": (
+                "Uh, perdón bro, tuve un error técnico. "
+                "¿Podés repetir?"
+            ),
+            "formal": (
+                "Disculpe, he tenido un inconveniente técnico. "
+                "¿Podría reformular su consulta?"
+            ),
+            "neutral": (
+                "Lo siento, tuve un problema técnico. "
+                "¿Puedes intentar de nuevo?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_timeout_message(self, state: AgentState) -> str:
+        """Mensaje cuando el LLM hace timeout."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, estoy un poco lento ahorita ve. "
+                "¿Me repites la pregunta? Ahora te respondo más rápido."
+            ),
+            "juvenil": (
+                "Che, perdón, estoy medio lento ahora. "
+                "¿Repetís la pregunta? Ahora te contesto al toque."
+            ),
+            "formal": (
+                "Disculpe la demora. Estoy experimentando lentitud en el sistema. "
+                "¿Podría reformular su consulta?"
+            ),
+            "neutral": (
+                "Disculpa la demora. El sistema está un poco lento. "
+                "¿Puedes repetir tu pregunta?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_error_message(self, state: AgentState, error: Exception) -> str:
+        """Mensaje genérico de error."""
+        style = state.user_style or "neutral"
+
+        # Loggear el error pero no exponerlo al usuario
+        error_type = type(error).__name__
+
+        messages = {
+            "cuencano": (
+                "Ayayay, tuve un problemita ve. "
+                "¿Puedo ayudarte con algo más?"
+            ),
+            "juvenil": (
+                "Uh, hubo un error bro. "
+                "¿Querés que te ayude con otra cosa?"
+            ),
+            "formal": (
+                "Lamento informarle que ha ocurrido un error técnico. "
+                "¿Puedo asistirle con algo más?"
+            ),
+            "neutral": (
+                "Lo siento, ocurrió un error. "
+                "¿Puedo ayudarte con algo más?"
+            ),
+        }
+
+        logger.debug(f"Error type for user message: {error_type}")
+        return messages.get(style, messages["neutral"])
+
+    def _is_error_message(self, message: str) -> bool:
+        """Detecta si un mensaje es un mensaje de error/fallback."""
+        error_indicators = [
+            "problema técnico",
+            "problemita",
+            "error técnico",
+            "inconveniente técnico",
+            "demora",
+            "lentitud",
+            "un poco lento",
+        ]
+
+        message_lower = message.lower()
+        return any(indicator in message_lower for indicator in error_indicators)
 
     def _build_system_prompt(self, state: AgentState) -> str:
         """

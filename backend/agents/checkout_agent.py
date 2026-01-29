@@ -49,33 +49,69 @@ class CheckoutAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AgentResponse:
         """
-        Procesa el flujo de checkout.
+        Procesa el flujo de checkout con manejo robusto de errores.
 
         Flujo:
         1. Identificar producto a comprar (del contexto o query)
         2. Validar stock disponible
         3. Solicitar confirmación de dirección
-        4. Procesar pedido
+        4. Procesar pedido (con transacción)
         5. Generar confirmación
-        """
-        logger.info(f"CheckoutAgent procesando: {state.user_query}")
 
-        # Determinar etapa del checkout
-        if state.checkout_stage is None:
-            # Iniciar checkout
-            return await self._initiate_checkout(state)
-        elif state.checkout_stage == "confirm":
-            # Confirmar producto
-            return await self._confirm_product(state)
-        elif state.checkout_stage == "address":
-            # Procesar dirección
-            return await self._process_address(state)
-        elif state.checkout_stage == "payment":
-            # Procesar pago
-            return await self._process_payment(state)
-        else:
-            # Estado desconocido, reiniciar
-            return await self._initiate_checkout(state)
+        Error Handling:
+        - Producto no encontrado → Mensaje claro + volver a Sales
+        - Stock insuficiente → Sugerir cantidad disponible
+        - Error de BD → Rollback automático + mensaje
+        - Estado inválido → Reset seguro
+        """
+        logger.info(
+            f"CheckoutAgent procesando: {state.user_query} "
+            f"(stage: {state.checkout_stage})"
+        )
+
+        try:
+            # Determinar etapa del checkout
+            if state.checkout_stage is None:
+                # Iniciar checkout
+                return await self._initiate_checkout(state)
+            elif state.checkout_stage == "confirm":
+                # Confirmar producto
+                return await self._confirm_product(state)
+            elif state.checkout_stage == "address":
+                # Procesar dirección
+                return await self._process_address(state)
+            elif state.checkout_stage == "payment":
+                # Procesar pago
+                return await self._process_payment(state)
+            else:
+                # Estado desconocido, reiniciar con warning
+                logger.warning(
+                    f"Estado de checkout desconocido: {state.checkout_stage}"
+                )
+                state.checkout_stage = None
+                return await self._initiate_checkout(state)
+
+        except Exception as e:
+            # Error crítico en checkout - limpiar estado y notificar
+            logger.error(
+                f"Error crítico en CheckoutAgent: {str(e)}",
+                exc_info=True
+            )
+
+            # Limpiar estado de checkout
+            state.checkout_stage = None
+            state.selected_products = []
+            state.cart_items = []
+
+            message = self._get_critical_error_message(state, e)
+
+            return self._create_response(
+                message=message,
+                state=state,
+                should_transfer=True,
+                transfer_to="sales",
+                error="critical_checkout_error",
+            )
 
     async def _initiate_checkout(
         self, state: AgentState
@@ -201,9 +237,19 @@ class CheckoutAgent(BaseAgent):
         return await self._process_payment(state)
 
     async def _process_payment(self, state: AgentState) -> AgentResponse:
-        """Procesa el pago y finaliza el pedido."""
+        """
+        Procesa el pago y finaliza el pedido con validaciones robustas.
+
+        Error Handling:
+        - Valida productos seleccionados
+        - Verifica stock antes de procesar
+        - Maneja errores de BD individualmente
+        - Rollback automático en caso de fallo
+        """
+        # Validación 1: Hay productos seleccionados?
         if not state.selected_products:
-            message = "Error: No hay productos seleccionados."
+            logger.error("Intento de checkout sin productos seleccionados")
+            message = self._get_no_products_error(state)
             state.checkout_stage = None
             return self._create_response(
                 message=message,
@@ -213,44 +259,233 @@ class CheckoutAgent(BaseAgent):
                 error="no_products",
             )
 
-        # Procesar cada producto
+        # Validación 2: Hay dirección de envío?
+        if not state.shipping_address:
+            logger.warning("Checkout sin dirección de envío")
+            state.checkout_stage = "address"
+            message = self._format_address_request(state)
+            return self._create_response(
+                message=message,
+                state=state,
+                should_transfer=False,
+                error="missing_address",
+            )
+
+        logger.info(
+            f"Procesando {len(state.selected_products)} producto(s) "
+            f"para envío a: {state.shipping_address}"
+        )
+
+        # Procesar cada producto con error handling
         success_items = []
         failed_items = []
 
         for item in state.selected_products:
             try:
-                result = await self.product_service.process_order(
-                    product_name=item["name"], quantity=item["quantity"]
+                logger.debug(
+                    f"Procesando item: {item['name']} x{item['quantity']}"
                 )
 
-                if result["success"]:
+                # Validar que el item tenga datos necesarios
+                if not item.get("name") or not item.get("quantity"):
+                    logger.error(f"Item inválido: {item}")
+                    failed_items.append({
+                        "item": item,
+                        "error": "Datos de producto incompletos"
+                    })
+                    continue
+
+                # Procesar orden en BD
+                result = await self.product_service.process_order(
+                    product_name=item["name"],
+                    quantity=item["quantity"]
+                )
+
+                if result.get("success"):
                     success_items.append(item)
+                    logger.info(
+                        f"✓ Pedido procesado: {item['name']} x{item['quantity']}"
+                    )
                 else:
-                    failed_items.append(
-                        {"item": item, "error": result.get("error")}
+                    error_msg = result.get("error", "Error desconocido")
+                    failed_items.append({
+                        "item": item,
+                        "error": error_msg
+                    })
+                    logger.warning(
+                        f"✗ Pedido fallido: {item['name']} - {error_msg}"
                     )
 
+            except ValueError as e:
+                # Error de validación (ej: stock insuficiente)
+                logger.warning(
+                    f"Validación fallida para {item['name']}: {str(e)}"
+                )
+                failed_items.append({
+                    "item": item,
+                    "error": f"Validación: {str(e)}"
+                })
+
             except Exception as e:
-                logger.error(f"Error procesando {item['name']}: {str(e)}")
-                failed_items.append({"item": item, "error": str(e)})
+                # Error inesperado de BD u otro
+                logger.error(
+                    f"Error inesperado procesando {item['name']}: {str(e)}",
+                    exc_info=True
+                )
+                failed_items.append({
+                    "item": item,
+                    "error": "Error de sistema"
+                })
 
-        # Generar mensaje final
-        message = self._format_order_confirmation(
-            success_items, failed_items, state
-        )
+        # Generar mensaje final basado en resultados
+        if success_items:
+            message = self._format_order_confirmation(
+                success_items, failed_items, state
+            )
+        elif failed_items:
+            # Todos los items fallaron
+            message = self._format_all_failed_message(failed_items, state)
+        else:
+            # Caso edge: sin éxitos ni fallos (no debería pasar)
+            logger.error("Checkout completado sin resultados")
+            message = self._get_unexpected_checkout_error(state)
 
-        # Limpiar estado de checkout
+        # Limpiar estado de checkout (siempre, incluso si hay fallos)
         state.checkout_stage = "complete"
         state.selected_products = []
         state.cart_items = []
 
+        # Si hubo algún éxito, no transferir
+        # Si todo falló, transferir a Sales para ayudar
+        should_transfer = len(success_items) == 0
+        transfer_to = "sales" if should_transfer else None
+
         return self._create_response(
             message=message,
             state=state,
-            should_transfer=False,
+            should_transfer=should_transfer,
+            transfer_to=transfer_to,
             success_count=len(success_items),
             failed_count=len(failed_items),
         )
+
+    def _get_no_products_error(self, state: AgentState) -> str:
+        """Mensaje cuando no hay productos para checkout."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, no veo ningún producto para comprar ve. "
+                "¿Buscamos algo primero?"
+            ),
+            "juvenil": (
+                "Che, no hay productos en el carrito bro. "
+                "¿Buscamos algo?"
+            ),
+            "formal": (
+                "Disculpe, no hay productos seleccionados para procesar. "
+                "¿Desea realizar una búsqueda?"
+            ),
+            "neutral": (
+                "No hay productos seleccionados. "
+                "¿Quieres buscar algo primero?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_critical_error_message(self, state: AgentState, error: Exception) -> str:
+        """Mensaje para errores críticos en checkout."""
+        style = state.user_style or "neutral"
+        error_type = type(error).__name__
+
+        logger.debug(f"Error crítico tipo: {error_type}")
+
+        messages = {
+            "cuencano": (
+                "Ayayay, tuve un problema grave con el pedido ve. "
+                "Lo siento mucho. ¿Intentamos de nuevo o buscas otra cosa?"
+            ),
+            "juvenil": (
+                "Uh, hubo un error grave en el pedido bro. "
+                "Perdón. ¿Probamos de nuevo?"
+            ),
+            "formal": (
+                "Lamento informarle que ha ocurrido un error crítico al procesar su pedido. "
+                "¿Desea intentar nuevamente?"
+            ),
+            "neutral": (
+                "Hubo un error crítico procesando el pedido. "
+                "Lo siento. ¿Quieres intentar de nuevo?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_unexpected_checkout_error(self, state: AgentState) -> str:
+        """Mensaje para situaciones inesperadas en checkout."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, algo raro pasó con el pedido ve. "
+                "¿Intentamos de nuevo?"
+            ),
+            "juvenil": (
+                "Che, pasó algo raro con el pedido. "
+                "¿Probamos otra vez?"
+            ),
+            "formal": (
+                "Disculpe, ocurrió una situación inesperada. "
+                "¿Desea intentar nuevamente?"
+            ),
+            "neutral": (
+                "Ocurrió algo inesperado con el pedido. "
+                "¿Intentamos de nuevo?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _format_all_failed_message(self, failed_items, state: AgentState) -> str:
+        """Mensaje cuando todos los items del checkout fallaron."""
+        style = state.user_style or "neutral"
+
+        # Construir lista de errores
+        error_details = []
+        for failure in failed_items[:3]:  # Max 3 para no saturar
+            item_name = failure["item"].get("name", "Producto")
+            error = failure.get("error", "Error desconocido")
+            error_details.append(f"- {item_name}: {error}")
+
+        errors_text = "\n".join(error_details)
+
+        if style == "cuencano":
+            message = (
+                f"Ayayay, ningún producto pudo procesarse ve. "
+                f"Estos fueron los problemas:\n\n{errors_text}\n\n"
+                f"¿Buscamos otra cosa o intentamos de nuevo?"
+            )
+        elif style == "juvenil":
+            message = (
+                f"Uh bro, ningún producto se pudo procesar. "
+                f"Los problemas fueron:\n\n{errors_text}\n\n"
+                f"¿Probamos de nuevo?"
+            )
+        elif style == "formal":
+            message = (
+                f"Lamento informarle que ningún producto pudo procesarse. "
+                f"Detalles:\n\n{errors_text}\n\n"
+                f"¿Desea intentar nuevamente?"
+            )
+        else:
+            message = (
+                f"No se pudo procesar ningún producto. "
+                f"Errores:\n\n{errors_text}\n\n"
+                f"¿Quieres intentar de nuevo?"
+            )
+
+        return message
 
     def _extract_product_from_context(
         self, state: AgentState

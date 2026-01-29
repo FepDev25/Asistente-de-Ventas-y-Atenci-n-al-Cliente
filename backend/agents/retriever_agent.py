@@ -58,51 +58,121 @@ class RetrieverAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AgentResponse:
         """
-        Procesa búsquedas de productos.
+        Procesa búsquedas de productos con manejo robusto de errores.
 
         Flujo:
         1. Extrae términos de búsqueda del query
-        2. Busca en la BD usando ProductService
+        2. Busca en la BD usando ProductService (con error handling)
         3. Filtra resultados por disponibilidad
         4. Retorna candidatos al orquestador
+
+        Error Handling:
+        - Error de BD → Mensaje amigable
+        - Timeout de BD → Mensaje de disculpa
+        - Sin términos de búsqueda → Mensaje de ayuda
         """
         logger.info(f"RetrieverAgent procesando: {state.user_query}")
 
-        # Extraer términos de búsqueda (palabras significativas)
-        search_terms = self._extract_search_terms(state.user_query)
-        logger.debug(f"Términos de búsqueda extraídos: {search_terms}")
+        try:
+            # Extraer términos de búsqueda (palabras significativas)
+            search_terms = self._extract_search_terms(state.user_query)
+            logger.debug(f"Términos de búsqueda extraídos: {search_terms}")
 
-        # Buscar productos
-        products = []
-        for term in search_terms:
-            found = await self.product_service.search_by_name(term)
-            products.extend(found)
+            # Validar que hay términos
+            if not search_terms:
+                logger.warning("No se pudieron extraer términos de búsqueda")
+                message = self._get_no_terms_message(state)
+                return self._create_response(
+                    message=message,
+                    state=state,
+                    should_transfer=True,
+                    transfer_to="sales",
+                    error="no_search_terms",
+                )
 
-        # Eliminar duplicados y filtrar por disponibilidad
-        unique_products = self._deduplicate_products(products)
-        available_products = [
-            p for p in unique_products if p.quantity_available > 0
-        ]
+            # Buscar productos con error handling
+            products = []
+            search_errors = []
 
-        logger.info(f"Productos encontrados: {len(available_products)}")
+            for term in search_terms:
+                try:
+                    found = await self.product_service.search_by_name(term)
+                    products.extend(found)
+                except Exception as e:
+                    logger.error(
+                        f"Error buscando término '{term}': {str(e)}",
+                        exc_info=True
+                    )
+                    search_errors.append(term)
+                    continue
 
-        # Actualizar estado
-        state.search_results = [
-            {
-                "id": str(p.id),
-                "name": p.product_name,
-                "price": float(p.unit_cost),
-                "stock": p.quantity_available,
-                "sku": p.product_sku,
-                "location": p.warehouse_location,
-            }
-            for p in available_products
-        ]
-        state.detected_intent = "search"
+            # Si todas las búsquedas fallaron
+            if search_errors and not products:
+                logger.error(
+                    f"Todas las búsquedas fallaron: {search_errors}"
+                )
+                message = self._get_db_error_message(state)
+                return self._create_response(
+                    message=message,
+                    state=state,
+                    should_transfer=True,
+                    transfer_to="sales",
+                    error="database_error",
+                )
+
+            # Eliminar duplicados y filtrar por disponibilidad
+            unique_products = self._deduplicate_products(products)
+            available_products = [
+                p for p in unique_products if p.quantity_available > 0
+            ]
+
+            logger.info(
+                f"Productos encontrados: {len(available_products)} "
+                f"(errores en {len(search_errors)} términos)"
+            )
+
+        except Exception as e:
+            # Error inesperado en el proceso
+            logger.error(
+                f"Error inesperado en RetrieverAgent: {str(e)}",
+                exc_info=True
+            )
+            message = self._get_unexpected_error_message(state)
+            return self._create_response(
+                message=message,
+                state=state,
+                should_transfer=True,
+                transfer_to="sales",
+                error="unexpected_error",
+            )
+
+        # Actualizar estado (siempre, incluso con búsqueda parcial)
+        try:
+            state.search_results = [
+                {
+                    "id": str(p.id),
+                    "name": p.product_name,
+                    "price": float(p.unit_cost),
+                    "stock": p.quantity_available,
+                    "sku": p.product_sku,
+                    "location": p.warehouse_location,
+                }
+                for p in available_products
+            ]
+            state.detected_intent = "search"
+        except Exception as e:
+            logger.error(f"Error serializando productos: {str(e)}")
+            # Continuar con lista vacía
+            state.search_results = []
 
         # Crear mensaje de respuesta
         if not available_products:
             message = self._format_no_results_message(state)
+
+            # Advertir si hubo errores de búsqueda
+            if search_errors:
+                message += f"\n\n_Nota: Algunos términos no pudieron buscarse._"
+
             # Transferir a SalesAgent para ofrecer alternativas
             return self._create_response(
                 message=message,
@@ -110,13 +180,22 @@ class RetrieverAgent(BaseAgent):
                 should_transfer=True,
                 transfer_to="sales",
                 products_found=0,
+                partial_errors=len(search_errors),
             )
 
         # Formatear resultados
-        message = self._format_search_results(available_products, state)
+        try:
+            message = self._format_search_results(available_products, state)
 
-        # Si hay pocos resultados (<=3), transferir a Sales para persuasión
-        # Si hay muchos (>3), dejar que el usuario refine o que Sales tome el control
+            # Advertir si hubo errores parciales
+            if search_errors:
+                message += f"\n\n_Nota: Algunos resultados pueden estar incompletos._"
+
+        except Exception as e:
+            logger.error(f"Error formateando resultados: {str(e)}")
+            message = self._get_format_error_message(state, len(available_products))
+
+        # Si hay pocos resultados (<=5), transferir a Sales para persuasión
         should_transfer = len(available_products) <= 5
         transfer_to = "sales" if should_transfer else None
 
@@ -126,7 +205,108 @@ class RetrieverAgent(BaseAgent):
             should_transfer=should_transfer,
             transfer_to=transfer_to,
             products_found=len(available_products),
+            partial_errors=len(search_errors),
         )
+
+    def _get_no_terms_message(self, state: AgentState) -> str:
+        """Mensaje cuando no se pueden extraer términos de búsqueda."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, no entendí bien qué estás buscando ve. "
+                "¿Me dices qué marca o tipo de zapato quieres?"
+            ),
+            "juvenil": (
+                "Che, no me quedó claro qué buscás. "
+                "¿Qué tipo de zapatillas querés?"
+            ),
+            "formal": (
+                "Disculpe, no logré identificar su búsqueda. "
+                "¿Podría especificar qué tipo de calzado busca?"
+            ),
+            "neutral": (
+                "No pude identificar qué buscas. "
+                "¿Podrías especificar marca o tipo de zapato?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_db_error_message(self, state: AgentState) -> str:
+        """Mensaje cuando la base de datos falla."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, tuve un problemita con la búsqueda ve. "
+                "¿Intentamos de nuevo en un ratito?"
+            ),
+            "juvenil": (
+                "Uh, hubo un error con la búsqueda bro. "
+                "¿Probamos de nuevo?"
+            ),
+            "formal": (
+                "Lamento informarle que hubo un problema técnico con la búsqueda. "
+                "¿Podría intentar nuevamente?"
+            ),
+            "neutral": (
+                "Hubo un problema con la búsqueda. "
+                "¿Puedes intentar de nuevo?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_unexpected_error_message(self, state: AgentState) -> str:
+        """Mensaje para errores inesperados."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                "Ayayay, algo salió mal ve. "
+                "¿Puedo ayudarte con otra cosa?"
+            ),
+            "juvenil": (
+                "Uh, hubo un error inesperado bro. "
+                "¿Te ayudo con algo más?"
+            ),
+            "formal": (
+                "Disculpe, ha ocurrido un error inesperado. "
+                "¿Puedo asistirle con algo más?"
+            ),
+            "neutral": (
+                "Ocurrió un error inesperado. "
+                "¿Puedo ayudarte con algo más?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
+
+    def _get_format_error_message(self, state: AgentState, product_count: int) -> str:
+        """Mensaje cuando falla el formateo de resultados."""
+        style = state.user_style or "neutral"
+
+        messages = {
+            "cuencano": (
+                f"Ayayay, encontré {product_count} productos ve, "
+                f"pero tuve un problemita mostrándolos. ¿Me dices cuál te interesa?"
+            ),
+            "juvenil": (
+                f"Che, tengo {product_count} productos pero hubo un error mostrándolos. "
+                f"¿Cuál querés ver?"
+            ),
+            "formal": (
+                f"Disculpe, encontré {product_count} productos pero hubo un error "
+                f"al mostrarlos. ¿Podría especificar cuál le interesa?"
+            ),
+            "neutral": (
+                f"Encontré {product_count} productos pero hubo un error mostrándolos. "
+                f"¿Cuál te interesa?"
+            ),
+        }
+
+        return messages.get(style, messages["neutral"])
 
     def _extract_search_terms(self, query: str) -> List[str]:
         """
