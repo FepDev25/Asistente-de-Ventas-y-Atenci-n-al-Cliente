@@ -52,16 +52,21 @@ class BusinessQuery:
     async def semantic_search(
         self,
         query: str,
-        search_service: Annotated[SearchService, Inject]
+        search_service: Annotated[SearchService, Inject],
+        session_id: str | None = None
     ) -> SemanticSearchResponse:
         """
         Chat con Alex: El usuario pregunta, la IA responde.
-        Query: { semanticSearch(query: "Quiero Nike baratos") { answer } }
-        """
-        logger.info(f"GraphQL: Chat con Alex -> '{query}'")
+        Query: { semanticSearch(query: "Quiero Nike baratos", sessionId: "user123") { answer } }
 
-        # Llamamos a SearchService (donde vive Gemini y las Tools)
-        result = await search_service.semantic_search(query)
+        Args:
+            query: Consulta del usuario
+            session_id: ID de sesión para mantener contexto (opcional)
+        """
+        logger.info(f"GraphQL: Chat con Alex -> '{query}' (session: {session_id})")
+
+        # Llamamos a SearchService (donde vive el orquestador multi-agente)
+        result = await search_service.semantic_search(query, session_id=session_id)
 
         return SemanticSearchResponse(
             answer=result.answer,

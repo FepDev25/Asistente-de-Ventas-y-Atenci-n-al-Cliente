@@ -1,117 +1,108 @@
 """
 El Cerebro del Agente (Search Service).
-Orquesta a 'Alex' (LLM) con las herramientas de inventario y pedidos.
+Ahora orquesta múltiples agentes especializados a través del AgentOrchestrator.
 """
 from dataclasses import dataclass
-from langchain_core.messages import ToolMessage
+from typing import Optional, Dict
 from loguru import logger
-from backend.services.product_service import ProductService
-from backend.services.rag_service import RAGService
-# Asegúrate de importar tus nuevas tools aquí
-from backend.llm.tools import create_product_search_tool, create_order_tool
-from backend.llm.tools.rag_tool import create_rag_tool 
+from backend.agents.orchestrator import AgentOrchestrator
+from backend.domain.agent_schemas import AgentState
+
 
 @dataclass
 class SearchResult:
     answer: str
+    agent_used: Optional[str] = None
+    metadata: Optional[Dict] = None
+
 
 class SearchService:
-    # EL PROMPT DE PERSONALIDAD (Rol 1)
-    SYSTEM_PROMPT = """ERES UN VENDEDOR EXPERTO DE ZAPATILLAS, NO UN ASISTENTE. TU NOMBRE ES 'ALEX'.
-    Tu objetivo es CERRAR VENTAS.
+    """
+    SearchService - Punto de entrada para búsquedas semánticas.
 
-    REGLAS DE COMPORTAMIENTO:
-    1. PERSUASIÓN: Si el usuario duda del precio, justifica con calidad y beneficios a largo plazo.
-    2. URGENCIA: Menciona sutilmente que el stock es limitado si el usuario muestra interés.
-    3. CROSS-SELLING: Si compran zapatos, sugiere calcetines o limpiadores.
-    4. CIERRE: Siempre termina tus respuestas invitando a la compra. Ej: "¿Te los envío hoy mismo?".
-    5. Responde SIEMPRE en Español.
+    Ahora delega al sistema multi-agente:
+    - RetrieverAgent: Búsqueda SQL rápida
+    - SalesAgent: Persuasión con LLM (Alex)
+    - CheckoutAgent: Cierre de pedidos
 
-    NO HAGAS:
-    - No seas pasivo ("¿En qué te ayudo?"). Sé proactivo ("Tengo una oferta para ti").
-    - No inventes stock. Usa las herramientas para verificar disponibilidad.
-    - No des respuestas vagas. Sé específico y directo.
-
-    REGLAS DE HERRAMIENTAS:
-    - Si el usuario pregunta por Nike, usa 'product_search' con término "Nike" (NO "zapatillas Nike para correr").
-    - Si preguntan por Adidas, busca "Adidas". Si es para running, busca "running" o la marca específica.
-    - USA TÉRMINOS SIMPLES: "Nike", "Adidas", "Puma", "running", "basketball", "casual".
-    - Si el usuario dice "Lo quiero", "Dame 2", "Me lo llevo", usa 'order_tool' de inmediato.
-    - Sé persuasivo pero honesto con el stock disponible.
+    Mantiene sesiones de usuario para conversaciones continuas.
     """
 
-    def __init__(self, llm_provider, product_service: ProductService, rag_service: RAGService):
-        self.llm_provider = llm_provider
-        
-        # Inicializamos las herramientas
-        if llm_provider:
-            self.search_tool = create_product_search_tool(product_service)
-            self.order_tool = create_order_tool(product_service)
-            self.rag_tool = create_rag_tool(rag_service)  # Nueva herramienta RAG
-            
-            # Lista completa de capacidades
-            self.tools = [self.search_tool, self.order_tool, self.rag_tool]
+    def __init__(self, orchestrator: AgentOrchestrator):
+        self.orchestrator = orchestrator
+        # Almacenamiento en memoria de sesiones (simple)
+        # TODO: Migrar a Redis para persistencia
+        self._sessions: Dict[str, AgentState] = {}
+        logger.info("SearchService inicializado con AgentOrchestrator")
 
-    async def semantic_search(self, query: str) -> SearchResult:
-        """Recibe el texto del usuario y devuelve la respuesta de Alex."""
-        
-        # configurar el modelo con las herramientas (Bind)
-        model_with_tools = self.llm_provider.bind_tools(self.tools)
+    async def semantic_search(
+        self, query: str, session_id: Optional[str] = None
+    ) -> SearchResult:
+        """
+        Recibe el texto del usuario y devuelve la respuesta del agente apropiado.
 
-        # historial básico de mensajes
-        messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
-            {"role": "user", "content": query},
-        ]
+        Args:
+            query: Consulta del usuario
+            session_id: ID de sesión para mantener contexto (opcional)
 
-        # primera llamada al LLM (¿Qué debo hacer?)
-        response = await model_with_tools.ainvoke(messages)
+        Returns:
+            SearchResult con la respuesta y metadata
+        """
+        logger.info(f"SearchService procesando query: {query[:50]}...")
 
-        # ¿El LLM quiere usar una herramienta?
-        if hasattr(response, "tool_calls") and response.tool_calls:
-            tool_messages = []
-            
-            for tool_call in response.tool_calls:
-                logger.info(f"Alex usa herramienta: {tool_call['name']}")
-                
-                # Selector de Herramientas
-                if tool_call["name"] == "product_search":
-                    # Ejecuta búsqueda de productos
-                    result = await self.search_tool.ainvoke(tool_call["args"])
-                elif tool_call["name"] == "order_tool":
-                    # Ejecuta venta
-                    result = await self.order_tool.ainvoke(tool_call["args"])
-                elif tool_call["name"] == "knowledge_search":
-                    # Ejecuta búsqueda en RAG
-                    result = await self.rag_tool.ainvoke(tool_call["args"])
-                
-                # Guardamos el resultado como mensaje de herramienta
-                tool_messages.append(
-                    ToolMessage(content=str(result), tool_call_id=tool_call["id"])
-                )
+        # Obtener o crear estado de sesión
+        if session_id and session_id in self._sessions:
+            session_state = self._sessions[session_id]
+            logger.debug(f"Sesión recuperada: {session_id}")
+        else:
+            session_state = None
+            if session_id:
+                logger.debug(f"Nueva sesión: {session_id}")
 
-            # segunda llamada al LLM (Generar respuesta final con los datos)
-            # se pasa: [Prompt, Usuario, Intención AI, Resultado Tool]
-            messages_final = messages + [response] + tool_messages
-            final_response = await model_with_tools.ainvoke(messages_final)
-            return SearchResult(answer=self._extract_text_content(final_response.content))
+        # Delegar al orquestador
+        response = await self.orchestrator.process_query(query, session_state)
 
-        # Si no usó herramientas, devolvemos la respuesta directa (Charla)
-        return SearchResult(answer=self._extract_text_content(response.content))
-    
-    def _extract_text_content(self, content) -> str:
-        """Extrae el contenido de texto de la respuesta del LLM, manejando diferentes formatos."""
-        # Si es un string simple, lo devolvemos tal como está
-        if isinstance(content, str):
-            return content
-        
-        # Si es una lista de objetos con formato [{'type': 'text', 'text': '...'}]
-        if isinstance(content, list):
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get('type') == 'text' and 'text' in item:
-                    text_parts.append(item['text'])
-            return ' '.join(text_parts) if text_parts else str(content)
-        
-        # Si es otro tipo de objeto, convertirlo a string
-        return str(content)
+        # Guardar estado actualizado
+        if session_id:
+            self._sessions[session_id] = response.state
+
+        # Convertir AgentResponse a SearchResult
+        result = SearchResult(
+            answer=response.message,
+            agent_used=response.agent_name,
+            metadata={
+                "user_style": response.state.user_style,
+                "intent": response.state.detected_intent,
+                "products_found": (
+                    len(response.state.search_results)
+                    if response.state.search_results
+                    else 0
+                ),
+                "in_checkout": response.state.checkout_stage is not None,
+                **response.metadata,
+            },
+        )
+
+        logger.info(
+            f"Respuesta generada por: {result.agent_used} "
+            f"(estilo: {result.metadata['user_style']}, "
+            f"intención: {result.metadata['intent']})"
+        )
+
+        return result
+
+    def clear_session(self, session_id: str) -> bool:
+        """Limpia una sesión específica."""
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+            logger.info(f"Sesión {session_id} eliminada")
+            return True
+        return False
+
+    def get_session_count(self) -> int:
+        """Retorna el número de sesiones activas."""
+        return len(self._sessions)
+
+    def get_session_state(self, session_id: str) -> Optional[AgentState]:
+        """Obtiene el estado de una sesión específica."""
+        return self._sessions.get(session_id)
