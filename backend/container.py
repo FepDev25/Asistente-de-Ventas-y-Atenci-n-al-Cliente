@@ -89,9 +89,17 @@ async def create_orchestrator(
     checkout_agent: CheckoutAgent,
     llm_provider: LLMProvider,
 ) -> AgentOrchestrator:
-    """Fabrica el Orquestador de Agentes."""
+    """
+    Fabrica el Orquestador de Agentes.
+
+    Configurado para usar detección inteligente con LLM Zero-shot por defecto.
+    """
     return AgentOrchestrator(
-        retriever_agent, sales_agent, checkout_agent, llm_provider
+        retriever_agent,
+        sales_agent,
+        checkout_agent,
+        llm_provider,
+        use_llm_detection=True,  # Detección inteligente habilitada
     )
 
 
