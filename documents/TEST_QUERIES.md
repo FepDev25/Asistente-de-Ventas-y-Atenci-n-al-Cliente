@@ -1,392 +1,395 @@
-# Queries de Prueba - Sistema Multi-Agente
+# Test Queries - Sistema Multi-Agente Mejorado
 
-Este archivo contiene queries de ejemplo para probar todas las funcionalidades del sistema multi-agente.
-
----
-
-## 1. RetrieverAgent (Agente Buscador)
-
-Queries que activan búsqueda SQL directa:
-
-### Búsquedas Básicas
-
-```txt
-"Busco zapatillas Nike"
-"Mostrame modelos Adidas"
-"Quiero ver zapatos para running"
-"Tienes Puma?"
-"Hay algo para basketball?"
-```
-
-### Búsquedas Específicas
-
-```txt
-"Necesito talla 42"
-"Modelos en color negro"
-"Que tienes en el catalogo?"
-"Cuales son los modelos disponibles?"
-"Zapatos para correr marca Nike"
-```
-
-### Búsquedas que NO encuentran resultados
-
-```txt
-"Busco Reebok" (si no tienes en BD)
-"Tienes sandalias?" (si solo vendes zapatillas)
-"Modelos de la marca XYZ"
-```
-
-**Comportamiento Esperado:**
-
-- Extrae términos clave (Nike, Adidas, running, etc.)
-- Busca en BD usando SQL
-- Formatea resultados con precio y stock
-- Transfiere a SalesAgent si hay ≤5 resultados
-- Mensaje adaptado al estilo del usuario
+**Versión:** 2.1 (Detección Inteligente + Error Handling)
+**Fecha:** Enero 2026
 
 ---
 
-## 2. SalesAgent (Agente Vendedor "Alex")
+## 📋 Índice de Pruebas
 
-Queries que activan persuasión con LLM:
-
-### Objeciones de Precio
-
-```txt
-"Están muy caros"
-"No tengo tanta plata"
-"Hay algo más barato?"
-"Ese precio es muy alto"
-"Vale la pena gastar tanto?"
-```
-
-### Solicitud de Recomendaciones
-
-```txt
-"Cual me recomiendas?"
-"No se cual elegir"
-"Que diferencia hay entre estos dos?"
-"Cual es mejor para correr?"
-"Necesito ayuda para decidir"
-```
-
-### Dudas Generales
-
-```txt
-"Por qué debería comprar este?"
-"Son de buena calidad?"
-"Cuanto tiempo duran?"
-"Vienen con garantía?"
-"Son originales?"
-```
-
-### Preguntas de Información (usa RAG)
-
-```txt
-"Que horarios tienen?"
-"Donde están ubicados?"
-"Hacen envíos?"
-"Como es el proceso de devolución?"
-"Aceptan tarjetas?"
-"Tienen promociones?"
-```
-
-**Comportamiento Esperado:**
-
-- Responde con personalidad de vendedor
-- Justifica precios con calidad/durabilidad
-- Sugiere cross-selling (calcetines, limpiadores)
-- Crea urgencia ("solo quedan X")
-- Adapta tono según estilo detectado
-- Usa RAG para info de políticas/horarios
+1. [Detección Inteligente (LLM Zero-shot)](#1-detección-inteligente-llm-zero-shot)
+2. [Detección de Estilos](#2-detección-de-estilos)
+3. [Flujos Completos de Conversación](#3-flujos-completos-de-conversación)
+4. [Manejo de Errores](#4-manejo-de-errores)
+5. [Transferencias entre Agentes](#5-transferencias-entre-agentes)
+6. [Casos Edge](#6-casos-edge)
 
 ---
 
-## 3. CheckoutAgent (Agente Cajero)
+## 1. Detección Inteligente (LLM Zero-shot)
 
-Queries que activan proceso de compra:
+### ✅ Test 1.1: Negación (Mejorado con LLM)
 
-### Confirmación de Compra
-
-```txt
-"Los quiero"
-"Dámelos"
-"Quiero comprar"
-"Envíamelos"
-"Procede con el pedido"
-"Me los llevo"
-```
-
-### Confirmaciones durante Checkout
-
-```txt
-"Sí" (después de ver producto)
-"Ok" (confirmar pedido)
-"Dale" (aceptar)
-"Confirmo" (finalizar)
-```
-
-### Cancelaciones
-
-```txt
-"No, mejor no"
-"Espera, cancela"
-"Mejor no lo compro"
-```
-
-### Dirección de Envío
-
-```txt
-"Av. Solano 123, Cuenca"
-"Calle Larga y Borrero, edificio azul, piso 3"
-"Urbanización El Bosque, casa 45, Cuenca"
-```
-
-**Comportamiento Esperado:**
-
-- Inicia flujo: confirm → address → payment
-- Valida stock en tiempo real
-- Solicita confirmación antes de procesar
-- Pide dirección de envío
-- Procesa orden en BD
-- NO usa LLM (solo lógica)
-
----
-
-## 4. Detección de Estilos de Usuario
-
-El sistema detecta automáticamente 4 estilos:
-
-### Estilo CUENCANO 🇪🇨
-
-```txt
-"Ayayay, que lindos ve"
-"Busco unos zapatos full buenos"
-"Están chevere estos"
-"Cuanto cuestan ve?"
-"Dame los Nike pana"
-```
-
-**Patrones detectados:** ayayay, ve, full, chevere, lindo, pana
-
-**Respuestas esperadas:**
-
-- "Ayayay, mirá lo que tengo para vos:"
-- "Están full lindos ve"
-- "Te quedan solo 2 ve!"
-
----
-
-### Estilo JUVENIL 🎮
-
-```txt
-"Che, mostrame algo copado"
-"Bro, que tenés en Nike?"
-"Re buenos estos"
-"Están tipo caros mal"
-"Dale, los quiero"
-```
-
-**Patrones detectados:** che, bro, tipo, re, mal, onda, copado
-
-**Respuestas esperadas:**
-
-- "¡Che, mira lo que encontré!"
-- "Están re copados estos"
-- "Dale, sin drama"
-
----
-
-### Estilo FORMAL 👔
-
-```txt
-"Buenos días, quisiera consultar por zapatillas"
-"Disculpe, tienen modelos Nike?"
-"Por favor, podría mostrarme el catálogo?"
-"Agradezco su ayuda"
-"Quisiera proceder con la compra"
-```
-
-**Patrones detectados:** usted, señor, señora, por favor, disculpe, agradezco
-
-**Respuestas esperadas:**
-
-- "He encontrado los siguientes productos:"
-- "¿Desea proceder con el pedido?"
-- "Excelente elección"
-
----
-
-### Estilo NEUTRAL (default) 😊
-
-```txt
-"Hola, busco zapatillas Nike"
-"Cuanto cuestan?"
-"Me interesa este modelo"
-"Quiero comprar"
-```
-
-**Respuestas esperadas:**
-
-- "Encontré estos productos:"
-- "¿Está correcto?"
-- "Perfecto, confirmemos el pedido"
-
----
-
-## 5. Flujos Completos de Conversación
-
-### Flujo 1: Búsqueda → Objeción → Compra (Estilo Cuencano)
-
-```txt
-Query 1: "Ayayay, busco unas Nike ve"
-→ RetrieverAgent busca productos
-→ Transfiere a SalesAgent
-
-Query 2: "Están caros ve"
-→ SalesAgent (estilo cuencano detectado) persuade
-
-Query 3: "Bueno dámelos"
-→ SalesAgent detecta intención de compra
-→ Transfiere a CheckoutAgent
-
-Query 4: "Sí" (confirmar)
-→ CheckoutAgent solicita dirección
-
-Query 5: "Av. Solano 123, Cuenca"
-→ CheckoutAgent procesa pedido y confirma
-```
-
----
-
-### Flujo 2: Búsqueda → Recomendación → Compra (Estilo Juvenil)
-
-```txt
-Query 1: "Che, qué tenés para running?"
-→ RetrieverAgent busca
-
-Query 2: "Cual me recomiendas bro?"
-→ SalesAgent (estilo juvenil) recomienda
-
-Query 3: "Re copado, los quiero"
-→ Transfiere a CheckoutAgent
-
-Query 4: "Dale, confirmo"
-→ CheckoutAgent solicita dirección
-
-Query 5: "Calle Larga 456, depto 2B"
-→ CheckoutAgent finaliza compra
-```
-
----
-
-### Flujo 3: Info → Búsqueda → Compra (Estilo Formal)
-
-```txt
-Query 1: "Disculpe, qué horarios tienen?"
-→ SalesAgent usa RAG para responder
-
-Query 2: "Quisiera ver modelos Adidas, por favor"
-→ Transfiere a RetrieverAgent → busca → vuelve a SalesAgent
-
-Query 3: "Me interesa este modelo de $150"
-→ SalesAgent responde sobre el producto
-
-Query 4: "Deseo proceder con la compra"
-→ Transfiere a CheckoutAgent
-
-Query 5: "Confirmo" → "Urbanización El Bosque, casa 45"
-→ CheckoutAgent procesa
-```
-
----
-
-### Flujo 4: Sin Resultados → Alternativas
-
-```txt
-Query 1: "Busco zapatillas Reebok"
-→ RetrieverAgent no encuentra resultados
-
-Query 2: "Que otras marcas tienes?"
-→ SalesAgent (con RetrieverAgent) muestra alternativas
-
-Query 3: "Ok, dame las Nike entonces"
-→ Transfiere a CheckoutAgent
-```
-
----
-
-## 6. Casos Edge (Pruebas de Robustez)
-
-### Queries Ambiguos
-
-```txt
-"Hola" → SalesAgent responde cordialmente
-"Gracias" → SalesAgent agradece
-"???" → SalesAgent pide aclaración
-```
-
-### Cambio de Intención
-
-```txt
-Query 1: "Busco Nike"
-Query 2: "No, mejor cancela, dame Adidas"
-→ Sistema debe cambiar de búsqueda
-```
-
-### Multiple Productos
-
-```txt
-"Quiero 2 Nike Air Max y 1 Adidas Ultraboost"
-→ CheckoutAgent debe manejar múltiples items (si está implementado)
-```
-
-### Stock Insuficiente
-
-```txt
-Query 1: RetrieverAgent muestra "Solo quedan 2"
-Query 2: "Quiero 5"
-→ CheckoutAgent debe avisar stock insuficiente
-```
-
----
-
-## 7. Verificación de Metadata
-
-Después de cada query, revisar la respuesta `metadata`:
-
-```json
-{
-  "agent_used": "sales",           // ¿Qué agente respondió?
-  "user_style": "cuencano",        // ¿Se detectó el estilo?
-  "intent": "persuasion",          // ¿Se clasificó bien?
-  "products_found": 3,             // ¿Cuántos productos?
-  "in_checkout": false             // ¿Está en proceso de compra?
-}
-```
-
----
-
-## 8. Comandos GraphQL
-
-### Query Básico
+**Antes (Keywords):** Detectaba "busco" → search ❌
+**Ahora (LLM):** Entiende que NO busca Nike, busca Adidas ✅
 
 ```graphql
 query {
-  semanticSearch(query: "Busco Nike para correr") {
+  semanticSearch(query: "No busco Nike, quiero Adidas") {
     answer
     query
   }
 }
 ```
 
-### Con Session ID (para mantener contexto)
+**Esperado:**
+
+- Intent: `search`
+- Agente: `retriever`
+- Reasoning: "Usuario rechaza Nike, busca Adidas"
+
+---
+
+### ✅ Test 1.2: Sinónimos (Mejorado con LLM)
+
+**Antes (Keywords):** No detectaba "ando buscando" ❌
+**Ahora (LLM):** Detecta sinónimos automáticamente ✅
+
+```graphql
+query {
+  semanticSearch(query: "Ando buscando zapatos para correr") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Intent: `search`
+- Reasoning: "'Ando buscando' es sinónimo de 'busco'"
+
+---
+
+### ✅ Test 1.3: Formalidad Sutil (Mejorado con LLM)
+
+**Antes (Keywords):** style=neutral (sin "usted") ❌
+**Ahora (LLM):** Detecta tono formal sin palabras clave ✅
+
+```graphql
+query {
+  semanticSearch(query: "Buenos días, quisiera consultar por zapatillas deportivas") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Style: `formal`
+- Intent: `search`
+- Reasoning: "Uso de 'quisiera' indica cortesía"
+
+---
+
+### ✅ Test 1.4: Contexto Complejo (Mejorado con LLM)
 
 ```graphql
 query {
   semanticSearch(
-    query: "Los quiero",
-    sessionId: "user123"
+    query: "Me gustaría saber si tienen disponibilidad en talla 42"
+    sessionId: "test-context-complex"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Intent: `search`
+- Reasoning: "Consulta sobre disponibilidad = búsqueda"
+
+---
+
+### ✅ Test 1.5: Objeción sin Keywords
+
+```graphql
+query {
+  semanticSearch(
+    query: "Uff, eso es mucho dinero"
+    sessionId: "test-objecion"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Intent: `persuasion`
+- Agente: `sales`
+- Reasoning: "Expresión de preocupación por precio"
+
+---
+
+## 2. Detección de Estilos
+
+### 🇪🇨 Test 2.1: Estilo Cuencano
+
+```graphql
+query {
+  semanticSearch(query: "Ayayay que lindo ve, busco unos Nike full buenos") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Style: `cuencano`
+- Patrones: "ayayay", "ve", "full"
+- Respuesta adaptada con modismos ecuatorianos
+
+---
+
+### 🎮 Test 2.2: Estilo Juvenil
+
+```graphql
+query {
+  semanticSearch(query: "Che bro, mostrame algo copado tipo para correr") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Style: `juvenil`
+- Patrones: "che", "bro", "tipo", "copado"
+- Respuesta casual y energética
+
+---
+
+### 👔 Test 2.3: Estilo Formal (Sin Keywords Explícitos)
+
+```graphql
+query {
+  semanticSearch(query: "Estimado, quisiera consultar disponibilidad de calzado deportivo") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Style: `formal` (detectado por tono, no keywords)
+- Reasoning: "Uso de 'estimado' y 'quisiera' indica formalidad"
+
+---
+
+### 😊 Test 2.4: Estilo Neutral
+
+```graphql
+query {
+  semanticSearch(query: "Hola, busco zapatillas Nike para running") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Style: `neutral`
+- Respuesta estándar, profesional pero amigable
+
+---
+
+## 3. Flujos Completos de Conversación
+
+### 🛒 Test 3.1: Flujo Completo - Búsqueda → Objeción → Compra (Cuencano)
+
+#### Step 1: Búsqueda inicial
+
+```graphql
+query {
+  semanticSearch(
+    query: "Ayayay, busco unas Nike ve"
+    sessionId: "flow-cuencano-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- RetrieverAgent → busca productos
+- Transfiere a SalesAgent
+- Estilo: cuencano detectado
+
+---
+
+#### Step 2: Objeción de precio
+
+```graphql
+query {
+  semanticSearch(
+    query: "Están caros ve"
+    sessionId: "flow-cuencano-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent persuade con estilo cuencano
+- Justifica precio
+- Crea urgencia
+
+---
+
+#### Step 3: Decisión de compra
+
+```graphql
+query {
+  semanticSearch(
+    query: "Bueno dámelos"
+    sessionId: "flow-cuencano-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent detecta intención de compra
+- Transfiere a CheckoutAgent
+- Solicita confirmación
+
+---
+
+#### Step 4: Confirmar
+
+```graphql
+query {
+  semanticSearch(
+    query: "Sí, confirmo"
+    sessionId: "flow-cuencano-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- CheckoutAgent solicita dirección
+- Mensaje en estilo cuencano
+
+---
+
+#### Step 5: Dirección
+
+```graphql
+query {
+  semanticSearch(
+    query: "Av. Solano 123, Cuenca, Ecuador"
+    sessionId: "flow-cuencano-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- CheckoutAgent procesa pedido
+- Confirma con resumen
+- Estilo cuencano: "Ayayay, listo ve!"
+
+---
+
+### 🎯 Test 3.2: Flujo Completo - Formal (Sin Checkout)
+
+#### Step 1: Saludo formal
+
+```graphql
+query {
+  semanticSearch(
+    query: "Buenos días, quisiera información sobre zapatillas para running"
+    sessionId: "flow-formal-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Style: formal detectado
+- Intent: search
+- RetrieverAgent busca
+
+---
+
+#### Step 2: Pregunta técnica
+
+```graphql
+query {
+  semanticSearch(
+    query: "Podría indicarme cuál ofrece mejor amortiguación?"
+    sessionId: "flow-formal-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent responde formalmente
+- Proporciona información técnica
+
+---
+
+#### Step 3: Consulta de garantía
+
+```graphql
+query {
+  semanticSearch(
+    query: "Qué garantía incluyen?"
+    sessionId: "flow-formal-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent usa RAG para info de garantías
+- Responde con trato de usted
+
+---
+
+### 🏃 Test 3.3: Flujo Juvenil - Rápido
+
+#### Step 1: Búsqueda casual
+
+```graphql
+query {
+  semanticSearch(
+    query: "Che, que tenés en Adidas?"
+    sessionId: "flow-juvenil-1"
   ) {
     answer
     query
@@ -396,104 +399,721 @@ query {
 
 ---
 
-## Checklist de Pruebas
+#### Step 2: Recomendación
 
-### RetrieverAgent
-
-- [ ] Búsqueda simple con 1 palabra clave
-- [ ] Búsqueda con múltiples palabras
-- [ ] Búsqueda sin resultados
-- [ ] Transferencia a SalesAgent con pocos resultados
-- [ ] Adaptación de mensaje según estilo
-
-### SalesAgent
-
-- [ ] Manejo de objeción de precio
-- [ ] Recomendaciones personalizadas
-- [ ] Cross-selling
-- [ ] Consulta RAG (horarios/políticas)
-- [ ] Detección de intención de compra
-- [ ] Transferencia a CheckoutAgent
-- [ ] Respuestas en 4 estilos diferentes
-
-### CheckoutAgent
-
-- [ ] Inicio de checkout
-- [ ] Confirmación de producto
-- [ ] Validación de stock
-- [ ] Solicitud de dirección
-- [ ] Procesamiento exitoso
-- [ ] Cancelación mid-checkout
-- [ ] Manejo de stock insuficiente
-
-### Orchestrator
-
-- [ ] Detección correcta de intenciones
-- [ ] Detección de estilo cuencano
-- [ ] Detección de estilo juvenil
-- [ ] Detección de estilo formal
-- [ ] Estilo neutral por defecto
-- [ ] Transferencias entre agentes
-- [ ] Prevención de loops infinitos
-
-### Integración
-
-- [ ] Flujo completo: búsqueda → persuasión → compra
-- [ ] Persistencia de sesión entre queries
-- [ ] Metadata correcta en respuestas
-- [ ] Compatibilidad con API GraphQL existente
-
----
-
-## Cómo Probar
-
-### Opción 1: GraphQL Playground
-
-1. Ir a <http://localhost:8000/graphql>
-2. Usar las queries de arriba
-3. Revisar respuestas y metadata
-
-### Opción 2: cURL
-
-```bash
-curl -X POST http://localhost:8000/graphql \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "query { semanticSearch(query: \"Busco Nike ve\") { answer query } }"
-  }'
-```
-
-### Opción 3: Python Script
-
-```python
-import requests
-
-query = """
+```graphql
 query {
-  semanticSearch(query: "Ayayay busco Nike ve") {
+  semanticSearch(
+    query: "Cual está más copado bro?"
+    sessionId: "flow-juvenil-1"
+  ) {
     answer
     query
   }
 }
-"""
-
-response = requests.post(
-    "http://localhost:8000/graphql",
-    json={"query": query}
-)
-
-print(response.json())
 ```
 
 ---
 
-## Notas
+#### Step 3: Compra directa
 
-- Los estilos se detectan analizando los últimos 5 mensajes
-- Se necesitan 2+ patrones para confirmar cuencano/juvenil
-- Solo 1 patrón es suficiente para formal
-- El sistema aprende el estilo a medida que conversas
-- Las transferencias entre agentes son automáticas
-- El CheckoutAgent siempre usa lógica dura (no LLM)
-- El SalesAgent usa Gemini 2.5 Flash
-- El RetrieverAgent solo hace SQL
+```graphql
+query {
+  semanticSearch(
+    query: "Dale, los quiero"
+    sessionId: "flow-juvenil-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+---
+
+#### Step 4: Confirmación rápida
+
+```graphql
+query {
+  semanticSearch(
+    query: "Ok"
+    sessionId: "flow-juvenil-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+---
+
+#### Step 5: Dirección Flujos
+
+```graphql
+query {
+  semanticSearch(
+    query: "Calle Larga 456, depto 2B, Cuenca"
+    sessionId: "flow-juvenil-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+---
+
+## 4. Manejo de Errores
+
+### ⚠️ Test 4.1: Query sin Términos de Búsqueda
+
+```graphql
+query {
+  semanticSearch(query: "Hola") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- Mensaje amigable pidiendo especificar
+- No crashea
+- Transfiere a SalesAgent
+
+---
+
+### ⚠️ Test 4.2: Dirección Muy Corta
+
+#### Setup (búsqueda + compra)
+
+```graphql
+query {
+  semanticSearch(
+    query: "Quiero Nike Air Max"
+    sessionId: "test-direccion-corta"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+```graphql
+query {
+  semanticSearch(
+    query: "Los quiero"
+    sessionId: "test-direccion-corta"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+```graphql
+query {
+  semanticSearch(
+    query: "Sí"
+    sessionId: "test-direccion-corta"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+#### Dirección inválida
+
+```graphql
+query {
+  semanticSearch(
+    query: "Calle 123"
+    sessionId: "test-direccion-corta"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- CheckoutAgent rechaza dirección corta
+- Pide dirección completa
+- No procesa pedido
+
+---
+
+### ⚠️ Test 4.3: Cancelación Mid-Checkout
+
+#### Setup
+
+```graphql
+query {
+  semanticSearch(
+    query: "Dame los Nike"
+    sessionId: "test-cancelacion"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+#### Cancelar
+
+```graphql
+query {
+  semanticSearch(
+    query: "No, mejor no"
+    sessionId: "test-cancelacion"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- CheckoutAgent cancela pedido
+- Limpia estado
+- Transfiere a SalesAgent
+- Mensaje: "No hay problema, ¿buscamos otra cosa?"
+
+---
+
+## 5. Transferencias entre Agentes
+
+### 🔄 Test 5.1: Retriever → Sales → Checkout
+
+```graphql
+query {
+  semanticSearch(
+    query: "Busco Nike"
+    sessionId: "test-transfers-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- RetrieverAgent busca
+- Si ≤5 resultados → transfiere a Sales
+
+---
+
+```graphql
+query {
+  semanticSearch(
+    query: "El primero está bien, lo quiero"
+    sessionId: "test-transfers-1"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent detecta intención
+- Transfiere a CheckoutAgent
+
+---
+
+### 🔄 Test 5.2: Sales → Retriever (Búsqueda Refinada)
+
+```graphql
+query {
+  semanticSearch(
+    query: "Tienes algo más barato?"
+    sessionId: "test-refine"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent puede sugerir nueva búsqueda
+- O trabajar con resultados existentes
+
+---
+
+## 6. Casos Edge
+
+### 🔍 Test 6.1: Sin Resultados
+
+```graphql
+query {
+  semanticSearch(query: "Busco zapatillas Reebok") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- RetrieverAgent: 0 resultados
+- Mensaje: "No encontré productos para 'Reebok'"
+- Transfiere a SalesAgent para alternativas
+
+---
+
+### 🔍 Test 6.2: Query Ambiguo
+
+```graphql
+query {
+  semanticSearch(query: "???") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent maneja query inválido
+- Mensaje amigable pidiendo aclaración
+
+---
+
+### 🔍 Test 6.3: Cambio de Intención
+
+```graphql
+query {
+  semanticSearch(
+    query: "Busco Nike"
+    sessionId: "test-cambio"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+```graphql
+query {
+  semanticSearch(
+    query: "No, mejor cancela eso, dame Adidas"
+    sessionId: "test-cambio"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- LLM detecta cambio de intención
+- Nueva búsqueda de Adidas
+- Cancela contexto anterior
+
+---
+
+### 🔍 Test 6.4: Múltiples Productos (Future)
+
+```graphql
+query {
+  semanticSearch(
+    query: "Quiero 2 Nike Air Max y 1 Adidas Ultraboost"
+    sessionId: "test-multiple"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- CheckoutAgent puede manejar o pedir uno por uno
+- Procesamiento individual con error handling
+
+---
+
+## 7. Tests de Información (RAG)
+
+### 📚 Test 7.1: Horarios
+
+```graphql
+query {
+  semanticSearch(query: "Qué horarios tienen?") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent usa RAG
+- Responde con horarios de chunks.csv
+
+---
+
+### 📚 Test 7.2: Envíos
+
+```graphql
+query {
+  semanticSearch(query: "Hacen envíos a domicilio?") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent usa RAG
+- Info de delivery_online
+
+---
+
+### 📚 Test 7.3: Garantías
+
+```graphql
+query {
+  semanticSearch(query: "Cuál es la política de garantía?") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent usa RAG
+- Info de warranties_support
+
+---
+
+### 📚 Test 7.4: Promociones
+
+```graphql
+query {
+  semanticSearch(query: "Tienen descuentos o promociones?") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado:**
+
+- SalesAgent usa RAG
+- Info de promotions_financing
+
+---
+
+## 8. Tests de Resiliencia
+
+### 💪 Test 8.1: Sesión Larga
+
+```graphql
+# Query 1
+query { semanticSearch(query: "Hola", sessionId: "long-session") { answer } }
+
+# Query 2
+query { semanticSearch(query: "Busco Nike", sessionId: "long-session") { answer } }
+
+# Query 3
+query { semanticSearch(query: "Están caros", sessionId: "long-session") { answer } }
+
+# Query 4
+query { semanticSearch(query: "Hay descuentos?", sessionId: "long-session") { answer } }
+
+# Query 5
+query { semanticSearch(query: "Ok, los quiero", sessionId: "long-session") { answer } }
+
+# Query 6
+query { semanticSearch(query: "Sí", sessionId: "long-session") { answer } }
+
+# Query 7
+query { semanticSearch(query: "Av. Solano 123", sessionId: "long-session") { answer } }
+```
+
+**Esperado:**
+
+- Mantiene contexto durante toda la conversación
+- Estilo detectado se mantiene
+- Transferencias funcionan correctamente
+
+---
+
+### 💪 Test 8.2: Conversación con Interrupciones
+
+```graphql
+query {
+  semanticSearch(
+    query: "Busco Nike"
+    sessionId: "test-interruption"
+  ) {
+    answer
+  }
+}
+```
+
+```graphql
+query {
+  semanticSearch(
+    query: "Espera, mejor Adidas"
+    sessionId: "test-interruption"
+  ) {
+    answer
+  }
+}
+```
+
+```graphql
+query {
+  semanticSearch(
+    query: "No, volvamos a Nike"
+    sessionId: "test-interruption"
+  ) {
+    answer
+  }
+}
+```
+
+**Esperado:**
+
+- LLM entiende cambios de dirección
+- Maneja interrupciones graciosamente
+
+---
+
+## 9. Tests Comparativos (LLM vs Keywords)
+
+### ⚖️ Test 9.1: Frases Complejas
+
+#### Con LLM
+
+```graphql
+query {
+  semanticSearch(query: "Me gustaría ver si tienen algo de Nike en mi presupuesto") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado (LLM):**
+
+- Intent: `search` + `persuasion`
+- Entiende: búsqueda + preocupación por precio
+
+---
+
+### ⚖️ Test 9.2: Doble Negación
+
+```graphql
+query {
+  semanticSearch(query: "No es que no quiera Nike, pero prefiero Adidas") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado (LLM):**
+
+- Intent: `search`
+- Entiende: Preferencia por Adidas
+
+---
+
+### ⚖️ Test 9.3: Tono Sarcástico
+
+```graphql
+query {
+  semanticSearch(query: "Wow, qué baratos...") {
+    answer
+    query
+  }
+}
+```
+
+**Esperado (LLM):**
+
+- Intent: `persuasion`
+- Detecta sarcasmo = objeción de precio
+
+---
+
+## 10. Validación de Metadata (Debug)
+
+### 🔍 Test 10.1: Ver Metadata Completa
+
+Para debugging, revisar los logs del servidor después de:
+
+```graphql
+query {
+  semanticSearch(
+    query: "Ayayay busco Nike ve"
+    sessionId: "test-metadata"
+  ) {
+    answer
+    query
+  }
+}
+```
+
+**Revisar en logs:**
+
+```bash
+grep "test-metadata" logs/app.log
+```
+
+**Esperado en logs:**
+
+```bash
+INFO: Estilo detectado: cuencano (confianza: 0.92)
+INFO: LLM clasificó como 'search' (confianza: 0.95): Usuario busca productos Nike
+INFO: Intención detectada: search -> Agente: retriever (confianza: 0.95)
+INFO: RetrieverAgent procesando: Ayayay busco Nike ve
+INFO: Productos encontrados: 5
+INFO: Transferencia #1: retriever -> sales
+INFO: Query procesado por agente final: sales
+```
+
+---
+
+## 📊 Matriz de Tests Recomendados
+
+| Test | Objetivo | Prioridad |
+| ------ | ---------- | ----------- |
+| 1.1-1.5 | Detección LLM | 🔥 Alta |
+| 2.1-2.4 | Estilos | 🔥 Alta |
+| 3.1-3.3 | Flujos completos | 🔥 Alta |
+| 4.1-4.3 | Error handling | 🔥 Alta |
+| 5.1-5.2 | Transferencias | 🟡 Media |
+| 6.1-6.4 | Casos edge | 🟡 Media |
+| 7.1-7.4 | RAG | 🟢 Baja |
+| 8.1-8.2 | Resiliencia | 🟢 Baja |
+
+---
+
+## 🎯 Quick Start - Tests Mínimos
+
+Si tienes poco tiempo, ejecuta estos 5 tests esenciales:
+
+### 1. Detección Inteligente
+
+```graphql
+query { semanticSearch(query: "No busco Nike, quiero Adidas") { answer query } }
+```
+
+### 2. Estilo Cuencano
+
+```graphql
+query { semanticSearch(query: "Ayayay busco Nike ve") { answer query } }
+```
+
+### 3. Flujo Completo
+
+```graphql
+query { semanticSearch(query: "Busco Nike", sessionId: "quick-1") { answer } }
+query { semanticSearch(query: "Los quiero", sessionId: "quick-1") { answer } }
+query { semanticSearch(query: "Sí", sessionId: "quick-1") { answer } }
+query { semanticSearch(query: "Av. Solano 123", sessionId: "quick-1") { answer } }
+```
+
+### 4. Error Handling
+
+```graphql
+query { semanticSearch(query: "???") { answer } }
+```
+
+### 5. Información
+
+```graphql
+query { semanticSearch(query: "Qué horarios tienen?") { answer } }
+```
+
+---
+
+## 🔧 Tips de Testing
+
+### Ejecutar en GraphQL Playground
+
+1. Abre: `http://localhost:8000/graphql`
+2. Copia una query del archivo
+3. Pega en el panel izquierdo
+4. Click en ▶️ (Play)
+5. Revisa respuesta en panel derecho
+
+### Ver Logs en Tiempo Real
+
+```bash
+tail -f logs/app.log | grep -E "(Estilo|Intención|LLM|Agent)"
+```
+
+### Limpiar Sesión
+
+```graphql
+# Usar nuevo sessionId para empezar fresh
+query {
+  semanticSearch(
+    query: "..."
+    sessionId: "nuevo-id-unico"
+  ) {
+    answer
+  }
+}
+```
+
+---
+
+## 📝 Checklist de Testing
+
+```bash
+Funcionalidad Core:
+[ ] Detección de intención con LLM
+[ ] Detección de estilo con LLM
+[ ] Fallback a keywords si LLM falla
+[ ] Búsqueda de productos
+[ ] Persuasión con SalesAgent
+[ ] Checkout completo
+[ ] RAG para información
+
+Error Handling:
+[ ] LLM timeout (simular apagando Vertex AI)
+[ ] BD caída (simular apagando PostgreSQL)
+[ ] Query inválido
+[ ] Dirección inválida
+[ ] Stock insuficiente
+[ ] Cancelación mid-checkout
+
+Estilos:
+[ ] Cuencano detectado correctamente
+[ ] Juvenil detectado correctamente
+[ ] Formal detectado correctamente
+[ ] Neutral por defecto
+
+Transferencias:
+[ ] Retriever → Sales
+[ ] Sales → Checkout
+[ ] Checkout → Sales (cancelación)
+
+Sesiones:
+[ ] Contexto mantenido entre queries
+[ ] Estilo persiste en sesión
+[ ] Productos recordados en sesión
+```
+
+---
+
+**Versión:** 2.1
+**Última actualización:** Enero 2026
+**Estado:** ✅ Listo para testing completo
