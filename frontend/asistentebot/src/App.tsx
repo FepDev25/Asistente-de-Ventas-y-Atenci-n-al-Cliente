@@ -5,6 +5,8 @@ import Login from './login/login';
 import Store from './store/store';
 import ChatBot from './chat/chatbot';
 import './App.css';
+import OrderDetail from './orders/orderdetail';
+import Orders from './orders/orders';
 
 function AppContent() {
   return (
@@ -17,6 +19,8 @@ function AppContent() {
         <Route path="/tienda" element={<Store />} />
         <Route path="/store" element={<Store />} />
         <Route path="/productos" element={<Store />} />
+        <Route path="/ordenes" element={<Orders />} />
+        <Route path="/ordenes/:orderId" element={<OrderDetail />} />
 
         {/* Ruta principal */}
         <Route path="/" element={<Navigate to="/tienda" />} />
