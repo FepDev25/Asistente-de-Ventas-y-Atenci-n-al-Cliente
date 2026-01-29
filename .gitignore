@@ -1,6 +1,5 @@
 # Credenciales y variables de entorno
 .env
-*.json
 !pyproject.toml
 arch-dev-agent-87f23e12bec3.json
 
