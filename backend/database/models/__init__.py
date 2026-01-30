@@ -2,4 +2,4 @@
 
 from backend.database.models.product_stock import ProductStock
 
-__all__ = ["ProductStock"]
+__all__ = ["ProductStock","User"]
