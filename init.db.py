@@ -6,15 +6,14 @@ from backend.database.connection import get_engine
 from backend.database.models.product_stock import Base, ProductStock 
 from backend.database.models.user_model import Base, User 
 from backend.database.session import get_session_factory
-
+from backend.config.security import securityJWT
 from passlib.context import CryptContext
 # Cargar explícitamente las variables de entorno
 dotenv.load_dotenv()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+
 
 PRODUCTOS_INICIALES = [
     {
@@ -138,7 +137,7 @@ async def init_database():
                     username=usr["username"],
                     email=usr["email"],
                     full_name=usr["full_name"],
-                    password_hash=hash_password(usr["password"]),
+                    password_hash=securityJWT.hash_password(usr["password"]),
                     role=usr["role"],
                     is_active=True
                 )

@@ -19,7 +19,7 @@ from strawberry.fastapi import GraphQLRouter
 dotenv.load_dotenv(dotenv.find_dotenv())
 
 from backend.config import get_business_settings
-
+from backend.api.endPoints.auth.auth import router as auth_router
 # Importamos tu esquema limpio
 from backend.api.graphql.queries import BusinessQuery
 from backend.container import create_business_container
@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
     # Creamos la ruta /graphql
     graphql_app = GraphQLRouter(schema)
     app.include_router(graphql_app, prefix="/graphql")
+    app.include_router(auth_router)
 
     @app.get("/")
     async def root():
