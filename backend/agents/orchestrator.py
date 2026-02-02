@@ -58,7 +58,7 @@ class AgentOrchestrator:
         self, query: str, session_state: Optional[AgentState] = None
     ) -> AgentResponse:
         """
-        Procesa un query del usuario coordinando entre agentes.
+        Procesa un query del usuario coordinando entre agentes con manejo robusto de errores.
 
         Args:
             query: Consulta del usuario
@@ -66,93 +66,185 @@ class AgentOrchestrator:
 
         Returns:
             AgentResponse del agente seleccionado
-        """
-        # Inicializar o actualizar estado
-        state = session_state or AgentState(user_query=query)
-        state.user_query = query
 
-        # DETECCIÓN DE STOP INTENT (ANTES de procesar con agentes)
-        stop_intent_detected, stop_message = self._detect_stop_intent(state)
-        if stop_intent_detected:
-            logger.info(f"Stop intent detectado: {query}")
-            # Retornar mensaje de despedida directamente
+        Error Handling:
+        - Agente falla → Fallback a SalesAgent con mensaje de error
+        - Transferencia inválida → Detiene transferencias
+        - Loop detectado → Rompe ciclo
+        - Error crítico → Respuesta de emergencia
+        """
+        try:
+            # Inicializar o actualizar estado
+            state = session_state or AgentState(user_query=query)
+            state.user_query = query
+
+            # DETECCIÓN DE STOP INTENT (ANTES de procesar con agentes)
+            stop_intent_detected, stop_message = self._detect_stop_intent(state)
+            if stop_intent_detected:
+                logger.info(f"Stop intent detectado: {query}")
+                return AgentResponse(
+                    agent_name="orchestrator",
+                    message=stop_message,
+                    state=state,
+                    should_transfer=False,
+                    metadata={"stop_intent": True}
+                )
+
+            # Detectar estilo de usuario si no está definido
+            if not state.user_style or state.user_style == "neutral":
+                try:
+                    # Usar detección LLM o Keywords según configuración
+                    if self.use_llm_detection:
+                        style_profile = await self._detect_user_style_llm(state)
+                    else:
+                        style_profile = await self._detect_user_style_keywords(state)
+
+                    state.user_style = style_profile.style
+                    logger.info(
+                        f"Estilo detectado: {state.user_style} "
+                        f"(confianza: {style_profile.confidence:.2f})"
+                    )
+                except Exception as e:
+                    logger.error(f"Error detectando estilo, usando neutral: {e}")
+                    state.user_style = "neutral"
+
+            # Detectar intención si no está en checkout
+            if state.checkout_stage is None:
+                try:
+                    # Usar detección LLM o Keywords según configuración
+                    if self.use_llm_detection:
+                        intent = await self._classify_intent_llm(state)
+                    else:
+                        intent = await self._classify_intent_keywords(state)
+
+                    state.detected_intent = intent.intent
+                    logger.info(
+                        f"Intención detectada: {intent.intent} -> "
+                        f"Agente: {intent.suggested_agent} "
+                        f"(confianza: {intent.confidence:.2f})"
+                    )
+                    current_agent_name = intent.suggested_agent
+                except Exception as e:
+                    logger.error(f"Error detectando intención, usando sales: {e}")
+                    current_agent_name = "sales"
+                    state.detected_intent = "persuasion"
+            else:
+                # Si está en checkout, usar CheckoutAgent
+                current_agent_name = "checkout"
+                logger.info("En proceso de checkout, usando CheckoutAgent")
+
+            # Validar que el agente existe
+            if current_agent_name not in self.agents:
+                logger.error(f"Agente '{current_agent_name}' no existe, usando sales")
+                current_agent_name = "sales"
+
+            # Seleccionar y ejecutar agente con try/except
+            try:
+                agent = self.agents[current_agent_name]
+                response = await agent.process(state)
+            except Exception as e:
+                logger.error(
+                    f"Error ejecutando agente '{current_agent_name}': {e}",
+                    exc_info=True
+                )
+                # Respuesta de fallback
+                response = AgentResponse(
+                    agent_name=current_agent_name,
+                    message=(
+                        "Disculpa, tuve un problema técnico. "
+                        "¿Puedes reformular tu pregunta?"
+                    ),
+                    state=state,
+                    should_transfer=False,
+                    metadata={"error": str(e)}
+                )
+
+            # Manejar transferencias entre agentes con detección de loops
+            max_transfers = 3
+            transfer_count = 0
+            transfer_history = []  # Para detectar loops
+
+            while response.should_transfer and transfer_count < max_transfers:
+                transfer_count += 1
+
+                # Crear clave de transferencia para detectar loops
+                transfer_key = f"{current_agent_name}->{response.transfer_to}"
+
+                # Detectar loop: misma transferencia 2+ veces
+                if transfer_history.count(transfer_key) >= 2:
+                    logger.warning(
+                        f"❌ Loop detectado en transferencias: {transfer_history}"
+                    )
+                    break
+
+                transfer_history.append(transfer_key)
+
+                logger.info(
+                    f"Transferencia #{transfer_count}: {transfer_key} "
+                    f"(historial: {' -> '.join(transfer_history)})"
+                )
+
+                # Validar que el agente destino existe
+                next_agent_name = response.transfer_to
+                if next_agent_name not in self.agents:
+                    logger.error(
+                        f"Agente de transferencia '{next_agent_name}' no existe"
+                    )
+                    break
+
+                next_agent = self.agents[next_agent_name]
+                current_agent_name = next_agent_name
+
+                # Procesar con nuevo agente con try/except
+                try:
+                    response = await next_agent.process(response.state)
+                except Exception as e:
+                    logger.error(
+                        f"Error en transferencia a '{next_agent_name}': {e}",
+                        exc_info=True
+                    )
+                    # Detener transferencias en caso de error
+                    break
+
+            # Logs finales
+            if transfer_count >= max_transfers:
+                logger.warning(
+                    f"⚠️ Máximo de transferencias alcanzado ({max_transfers})"
+                )
+
+            if transfer_history:
+                logger.info(
+                    f"✅ Flujo de transferencias: "
+                    f"{' -> '.join(transfer_history)} -> {response.agent_name}"
+                )
+
+            logger.info(
+                f"Query procesado por agente final: {response.agent_name}"
+            )
+
+            return response
+
+        except Exception as e:
+            # Error crítico en orchestrator - respuesta de emergencia
+            logger.error(
+                f"💥 Error crítico en Orchestrator procesando '{query[:50]}...': {e}",
+                exc_info=True
+            )
+
+            # Crear estado mínimo si no existe
+            emergency_state = session_state or AgentState(user_query=query)
+            emergency_state.user_query = query
+
             return AgentResponse(
                 agent_name="orchestrator",
-                message=stop_message,
-                state=state,
+                message=(
+                    "Disculpa, tuve un problema técnico. "
+                    "¿Puedes intentar de nuevo con una pregunta diferente?"
+                ),
+                state=emergency_state,
                 should_transfer=False,
-                metadata={"stop_intent": True}
+                metadata={"error": "orchestrator_failure", "error_message": str(e)}
             )
-
-        # Detectar estilo de usuario si no está definido
-        if not state.user_style or state.user_style == "neutral":
-            # Usar detección LLM o Keywords según configuración
-            if self.use_llm_detection:
-                style_profile = await self._detect_user_style_llm(state)
-            else:
-                style_profile = await self._detect_user_style_keywords(state)
-
-            state.user_style = style_profile.style
-            logger.info(
-                f"Estilo detectado: {state.user_style} (confianza: {style_profile.confidence:.2f})"
-            )
-
-        # Detectar intención si no está en checkout
-        if state.checkout_stage is None:
-            # Usar detección LLM o Keywords según configuración
-            if self.use_llm_detection:
-                intent = await self._classify_intent_llm(state)
-            else:
-                intent = await self._classify_intent_keywords(state)
-
-            state.detected_intent = intent.intent
-            logger.info(
-                f"Intención detectada: {intent.intent} -> Agente: {intent.suggested_agent} "
-                f"(confianza: {intent.confidence:.2f})"
-            )
-            current_agent_name = intent.suggested_agent
-        else:
-            # Si está en checkout, usar CheckoutAgent
-            current_agent_name = "checkout"
-            logger.info("En proceso de checkout, usando CheckoutAgent")
-
-        # Seleccionar y ejecutar agente
-        agent = self.agents[current_agent_name]
-        response = await agent.process(state)
-
-        # Manejar transferencias entre agentes
-        max_transfers = 3  # Evitar loops infinitos
-        transfer_count = 0
-
-        while response.should_transfer and transfer_count < max_transfers:
-            transfer_count += 1
-            logger.info(
-                f"Transferencia #{transfer_count}: {current_agent_name} -> {response.transfer_to}"
-            )
-
-            # Transferir a nuevo agente
-            next_agent_name = response.transfer_to
-            if next_agent_name not in self.agents:
-                logger.error(
-                    f"Agente de transferencia '{next_agent_name}' no existe"
-                )
-                break
-
-            next_agent = self.agents[next_agent_name]
-            current_agent_name = next_agent_name
-
-            # Procesar con nuevo agente
-            response = await next_agent.process(response.state)
-
-        if transfer_count >= max_transfers:
-            logger.warning(
-                f"Máximo de transferencias alcanzado ({max_transfers})"
-            )
-
-        logger.info(
-            f"Query procesado por agente final: {response.agent_name}"
-        )
-        return response
 
     # DETECCIÓN INTELIGENTE CON LLM ZERO-SHOT
 
