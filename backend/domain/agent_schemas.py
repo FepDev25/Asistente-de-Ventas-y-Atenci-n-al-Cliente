@@ -36,6 +36,9 @@ class AgentState(BaseModel):
     checkout_stage: Optional[Literal["confirm", "address", "payment", "complete"]] = None
     shipping_address: Optional[str] = None
 
+    # Usuario autenticado (si aplica)
+    user_id: Optional[str] = None  # UUID como string
+    
     # Metadata
     current_agent: Optional[str] = None
     session_id: Optional[str] = None
