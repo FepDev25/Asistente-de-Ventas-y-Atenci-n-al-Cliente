@@ -1,8 +1,8 @@
 from passlib.context import CryptContext
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import jwt
 from backend.config.security.config import settings
-from backend.database.models.user_model import User
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:
@@ -11,9 +11,10 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return pwd_context.verify(password, hashed)
 
-def create_access_token(data: dict,user:User):
+def create_access_token(data: dict, user: dict) -> str:
+    """Crea un token JWT con los datos del usuario y tiempo de expiración."""
     to_encode = user.copy()
-    to_encode["exp"] = datetime.utcnow() + timedelta(
+    to_encode["exp"] = datetime.now(timezone.utc) + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
     return jwt.encode(
