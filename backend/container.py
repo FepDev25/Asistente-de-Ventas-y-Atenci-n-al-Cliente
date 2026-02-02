@@ -15,6 +15,7 @@ dotenv.load_dotenv()
 
 from backend.database.session import get_session_factory
 from backend.llm.provider import LLMProvider, create_llm_provider
+from backend.services.order_service import OrderService
 from backend.services.product_service import ProductService
 from backend.services.search_service import SearchService
 from backend.services.tenant_data_service import TenantDataService
@@ -43,6 +44,12 @@ async def create_product_service(
 ) -> ProductService:
     """Fabrica el servicio de inventario conectándolo a la DB."""
     return ProductService(session_factory)
+
+async def create_order_service(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> OrderService:
+    """Fabrica el servicio de pedidos conectándolo a la DB."""
+    return OrderService(session_factory)
 
 async def create_llm_provider_instance() -> LLMProvider:
     """Fabrica el proveedor de IA (Gemini)."""
@@ -134,9 +141,10 @@ async def create_sales_agent(
 
 async def create_checkout_agent(
     product_service: ProductService,
+    order_service: OrderService,
 ) -> CheckoutAgent:
     """Fabrica el Agente Cajero (checkout con lógica dura)."""
-    return CheckoutAgent(product_service)
+    return CheckoutAgent(product_service, order_service)
 
 
 async def create_orchestrator(
@@ -167,6 +175,7 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     providers_list.append(aioinject.Singleton(create_tenant_data_service))
     providers_list.append(aioinject.Singleton(create_session_factory))
     providers_list.append(aioinject.Singleton(create_product_service))
+    providers_list.append(aioinject.Singleton(create_order_service))
 
     # 2. Redis y Sesiones
     providers_list.append(aioinject.Singleton(create_redis_settings))
