@@ -5,7 +5,7 @@ from typing import Optional, Dict
 import json
 import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage
-from config.logging_config import get_logger
+from backend.config.logging_config import get_logger
 
 from backend.agents.base import BaseAgent
 from backend.agents.retriever_agent import RetrieverAgent

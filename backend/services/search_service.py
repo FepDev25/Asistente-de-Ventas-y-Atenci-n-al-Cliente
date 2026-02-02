@@ -2,12 +2,16 @@
 El Cerebro del Agente (Search Service).
 Ahora orquesta múltiples agentes especializados a través del AgentOrchestrator.
 """
+from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, Dict
+from typing import Optional, Dict, TYPE_CHECKING
 from loguru import logger
-from backend.agents.orchestrator import AgentOrchestrator
+
 from backend.domain.agent_schemas import AgentState
-from backend.services.session_service import SessionService
+
+if TYPE_CHECKING:
+    from backend.agents.orchestrator import AgentOrchestrator
+    from backend.services.session_service import SessionService
 
 
 @dataclass
