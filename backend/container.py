@@ -19,10 +19,15 @@ from backend.services.product_service import ProductService
 from backend.services.search_service import SearchService
 from backend.services.tenant_data_service import TenantDataService
 from backend.services.rag_service import RAGService
+from backend.services.session_service import SessionService, create_redis_client
+from backend.config.redis_config import RedisSettings, get_redis_settings
 from backend.agents.retriever_agent import RetrieverAgent
 from backend.agents.sales_agent import SalesAgent
 from backend.agents.checkout_agent import CheckoutAgent
 from backend.agents.orchestrator import AgentOrchestrator
+
+import redis.asyncio as redis
+from loguru import logger
 
 
 async def create_tenant_data_service() -> TenantDataService:
@@ -47,14 +52,65 @@ async def create_rag_service() -> RAGService:
     """Fabrica el servicio RAG (búsqueda semántica)."""
     return RAGService()
 
+
+# === Redis y Sesiones ===
+
+
+async def create_redis_settings() -> RedisSettings:
+    """Fabrica la configuración de Redis."""
+    settings = get_redis_settings()
+    settings.log_config()
+    return settings
+
+
+async def create_redis_client_instance(
+    settings: RedisSettings,
+) -> redis.Redis:
+    """
+    Fabrica el cliente de Redis.
+
+    NOTA: Si Redis no está disponible, retorna None y SearchService
+    usará fallback a memoria (solo para desarrollo).
+    """
+    try:
+        client = await create_redis_client(settings)
+        return client
+    except Exception as e:
+        logger.error(
+            f"❌ No se pudo conectar a Redis: {e}. "
+            f"SearchService usará memoria (NO usar en producción)"
+        )
+        # Retornar None para activar fallback a memoria
+        return None
+
+
+async def create_session_service(
+    redis_client: redis.Redis,
+    settings: RedisSettings,
+) -> SessionService:
+    """
+    Fabrica el servicio de sesiones con Redis.
+
+    Si Redis no está disponible, retorna None y SearchService usará fallback.
+    """
+    if redis_client is None:
+        logger.warning("Redis no disponible, SessionService deshabilitado")
+        return None
+
+    return SessionService(redis_client, settings)
+
+
 async def create_search_service(
     orchestrator: AgentOrchestrator,
+    session_service: SessionService = None,
 ) -> SearchService:
     """
     Fabrica el 'Cerebro' (SearchService).
     Ahora delega al AgentOrchestrator que coordina múltiples agentes.
+
+    Si session_service es None, usa fallback a memoria (desarrollo).
     """
-    return SearchService(orchestrator)
+    return SearchService(orchestrator, session_service)
 
 
 # === Agentes del Sistema Multi-Agente ===
@@ -112,12 +168,17 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     providers_list.append(aioinject.Singleton(create_session_factory))
     providers_list.append(aioinject.Singleton(create_product_service))
 
-    # 2. Servicios de IA
+    # 2. Redis y Sesiones
+    providers_list.append(aioinject.Singleton(create_redis_settings))
+    providers_list.append(aioinject.Singleton(create_redis_client_instance))
+    providers_list.append(aioinject.Singleton(create_session_service))
+
+    # 3. Servicios de IA
     providers_list.append(aioinject.Singleton(create_llm_provider_instance))
     providers_list.append(aioinject.Singleton(create_rag_service))
     providers_list.append(aioinject.Singleton(create_search_service))
 
-    # 3. Sistema Multi-Agente
+    # 4. Sistema Multi-Agente
     providers_list.append(aioinject.Singleton(create_retriever_agent))
     providers_list.append(aioinject.Singleton(create_sales_agent))
     providers_list.append(aioinject.Singleton(create_checkout_agent))
