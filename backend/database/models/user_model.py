@@ -3,13 +3,17 @@ Modelo de Base de Datos: User
 Usuarios del sistema de ventas
 """
 from datetime import datetime
+from typing import TYPE_CHECKING, List
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, SmallInteger, String, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database.models.base import Base
+
+if TYPE_CHECKING:
+    from backend.database.models.order import Order
 
 
 class User(Base):
@@ -43,6 +47,12 @@ class User(Base):
     # Estado
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
+    )
+
+    # Relaciones
+    orders: Mapped[List["Order"]] = relationship(
+        back_populates="user",
+        lazy="dynamic"
     )
 
     def __repr__(self) -> str:
