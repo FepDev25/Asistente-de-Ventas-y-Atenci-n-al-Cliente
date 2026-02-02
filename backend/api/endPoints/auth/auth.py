@@ -41,6 +41,13 @@ async def login(credentials: LoginRequest):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # Verificar si el usuario está activo
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Usuario desactivado. Contacte al administrador.",
+            )
+
         if not verify_password(credentials.password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
