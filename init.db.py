@@ -4,6 +4,8 @@ from sqlalchemy import text
 from decimal import Decimal
 from backend.database.connection import get_engine
 from backend.database.models.base import Base
+from backend.database.models.order import Order, OrderStatus
+from backend.database.models.order_detail import OrderDetail
 from backend.database.models.product_stock import ProductStock
 from backend.database.models.user_model import User
 from backend.database.session import get_session_factory
@@ -95,6 +97,7 @@ async def init_database():
         
         print("Creando tablas en Postgres...")
         await conn.run_sync(Base.metadata.create_all)
+        print("✓ Tablas creadas: users, product_stocks, orders, order_details")
     
     # 3. Insertar datos
     session_factory = get_session_factory()
@@ -146,7 +149,19 @@ async def init_database():
             print("Usuarios creados exitosamente.")
         else:
             print(f"Ya existen {count} usuarios. No se insertó nada.")
+    
+    # 4. Verificar tablas de pedidos
+    async with session_factory() as session:
+        result = await session.execute(text("SELECT count(*) FROM orders"))
+        count = result.scalar()
+        print(f"📦 Tabla 'orders': {count} pedidos existentes")
+        
+        result = await session.execute(text("SELECT count(*) FROM order_details"))
+        count = result.scalar()
+        print(f"📋 Tabla 'order_details': {count} líneas de detalle existentes")
+    
     await engine.dispose()
+    print("\n✅ Base de datos inicializada correctamente.")
 
 if __name__ == "__main__":
     asyncio.run(init_database())
