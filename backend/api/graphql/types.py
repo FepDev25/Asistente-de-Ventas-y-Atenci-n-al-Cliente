@@ -28,8 +28,15 @@ class ProductStockType:
 
 @strawberry.type
 class SemanticSearchResponse:
-    """La respuesta de Alex (El Agente)."""
+    """
+    La respuesta de Alex (El Agente).
+
+    El campo 'error' indica si hubo algún problema:
+    - None: Respuesta exitosa
+    - "timeout": LLM o BD tardó demasiado
+    - "internal_error": Error técnico general
+    - "service_unavailable": Servicio no disponible
+    """
     answer: str
-    # En versiones complejas aquí iría una lista de productos estructurada,
-    # para la demo, Alex ya incluye los productos en el texto 'answer'.
     query: str
+    error: str | None = None  # Nuevo: indica tipo de error si existe
