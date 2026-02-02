@@ -4,8 +4,8 @@ Orquestador de Agentes - Coordina el flujo entre múltiples agentes.
 from typing import Optional, Dict
 import json
 import asyncio
-from loguru import logger
 from langchain_core.messages import SystemMessage, HumanMessage
+from config.logging_config import get_logger
 
 from backend.agents.base import BaseAgent
 from backend.agents.retriever_agent import RetrieverAgent
@@ -47,11 +47,14 @@ class AgentOrchestrator:
         }
         self.llm_provider = llm_provider
         self.use_llm_detection = use_llm_detection
+        self.logger = get_logger("orchestrator")
 
         detection_method = "LLM Zero-shot" if use_llm_detection else "Keywords"
-        logger.info(
-            f"AgentOrchestrator inicializado con 3 agentes "
-            f"(Detección: {detection_method})"
+        self.self.logger.info(
+            "orchestrator_initialized",
+            agent_count=len(self.agents),
+            detection_method=detection_method,
+            agents_available=list(self.agents.keys())
         )
 
     async def process_query(
@@ -78,10 +81,33 @@ class AgentOrchestrator:
             state = session_state or AgentState(user_query=query)
             state.user_query = query
 
+            # Logger con contexto
+            log = self.logger.bind(
+                session_id=getattr(state, 'session_id', 'unknown'),
+                query=query[:100],
+                query_length=len(query),
+                has_history=bool(getattr(state, 'conversation_history', [])),
+                checkout_stage=getattr(state, 'checkout_stage', None)
+            )
+
+            log.info(
+                "query_received",
+                user_style=getattr(state, 'user_style', None),
+                detected_intent=getattr(state, 'detected_intent', None)
+            )
+
             # DETECCIÓN DE STOP INTENT (ANTES de procesar con agentes)
             stop_intent_detected, stop_message = self._detect_stop_intent(state)
             if stop_intent_detected:
-                logger.info(f"Stop intent detectado: {query}")
+                log = self.logger.bind(
+                    session_id=getattr(state, 'session_id', None),
+                    query=query[:50]
+                )
+                log.info(
+                    "stop_intent_detected",
+                    query_full=query,
+                    stop_message=stop_message[:50]
+                )
                 return AgentResponse(
                     agent_name="orchestrator",
                     message=stop_message,
@@ -100,12 +126,18 @@ class AgentOrchestrator:
                         style_profile = await self._detect_user_style_keywords(state)
 
                     state.user_style = style_profile.style
-                    logger.info(
-                        f"Estilo detectado: {state.user_style} "
-                        f"(confianza: {style_profile.confidence:.2f})"
+                    log.info(
+                        "style_detected",
+                        style=state.user_style,
+                        confidence=round(style_profile.confidence, 2),
+                        method="llm" if self.use_llm_detection else "keywords"
                     )
                 except Exception as e:
-                    logger.error(f"Error detectando estilo, usando neutral: {e}")
+                    log.error(
+                        "style_detection_failed",
+                        error=str(e),
+                        fallback="neutral"
+                    )
                     state.user_style = "neutral"
 
             # Detectar intención si no está en checkout
@@ -118,33 +150,64 @@ class AgentOrchestrator:
                         intent = await self._classify_intent_keywords(state)
 
                     state.detected_intent = intent.intent
-                    logger.info(
-                        f"Intención detectada: {intent.intent} -> "
-                        f"Agente: {intent.suggested_agent} "
-                        f"(confianza: {intent.confidence:.2f})"
+                    log.info(
+                        "intent_detected",
+                        intent=intent.intent,
+                        suggested_agent=intent.suggested_agent,
+                        confidence=round(intent.confidence, 2),
+                        method="llm" if self.use_llm_detection else "keywords"
                     )
                     current_agent_name = intent.suggested_agent
                 except Exception as e:
-                    logger.error(f"Error detectando intención, usando sales: {e}")
+                    log.error(
+                        "intent_detection_failed",
+                        error=str(e),
+                        fallback="sales"
+                    )
                     current_agent_name = "sales"
                     state.detected_intent = "persuasion"
             else:
                 # Si está en checkout, usar CheckoutAgent
                 current_agent_name = "checkout"
-                logger.info("En proceso de checkout, usando CheckoutAgent")
+                log.info(
+                    "checkout_flow_active",
+                    agent="checkout",
+                    stage=state.checkout_stage
+                )
 
             # Validar que el agente existe
             if current_agent_name not in self.agents:
-                logger.error(f"Agente '{current_agent_name}' no existe, usando sales")
+                log.error(
+                    "agent_not_found",
+                    requested_agent=current_agent_name,
+                    fallback="sales",
+                    available_agents=list(self.agents.keys())
+                )
                 current_agent_name = "sales"
 
             # Seleccionar y ejecutar agente con try/except
             try:
                 agent = self.agents[current_agent_name]
+                log.info(
+                    "agent_selected",
+                    agent=current_agent_name,
+                    intent=state.detected_intent,
+                    style=state.user_style
+                )
                 response = await agent.process(state)
+                log.info(
+                    "agent_processed",
+                    agent=current_agent_name,
+                    should_transfer=response.should_transfer,
+                    transfer_to=response.transfer_to if response.should_transfer else None,
+                    response_length=len(response.message)
+                )
             except Exception as e:
-                logger.error(
-                    f"Error ejecutando agente '{current_agent_name}': {e}",
+                log.error(
+                    "agent_execution_failed",
+                    agent=current_agent_name,
+                    error=str(e),
+                    error_type=type(e).__name__,
                     exc_info=True
                 )
                 # Respuesta de fallback
@@ -172,23 +235,31 @@ class AgentOrchestrator:
 
                 # Detectar loop: misma transferencia 2+ veces
                 if transfer_history.count(transfer_key) >= 2:
-                    logger.warning(
-                        f"❌ Loop detectado en transferencias: {transfer_history}"
+                    log.warning(
+                        "transfer_loop_detected",
+                        transfer_key=transfer_key,
+                        history=transfer_history,
+                        count=transfer_history.count(transfer_key)
                     )
                     break
 
                 transfer_history.append(transfer_key)
 
-                logger.info(
-                    f"Transferencia #{transfer_count}: {transfer_key} "
-                    f"(historial: {' -> '.join(transfer_history)})"
+                log.info(
+                    "agent_transfer",
+                    transfer_number=transfer_count,
+                    from_agent=current_agent_name,
+                    to_agent=response.transfer_to,
+                    transfer_chain=" -> ".join(transfer_history)
                 )
 
                 # Validar que el agente destino existe
                 next_agent_name = response.transfer_to
                 if next_agent_name not in self.agents:
-                    logger.error(
-                        f"Agente de transferencia '{next_agent_name}' no existe"
+                    log.error(
+                        "transfer_target_not_found",
+                        requested_agent=next_agent_name,
+                        available_agents=list(self.agents.keys())
                     )
                     break
 
@@ -198,9 +269,17 @@ class AgentOrchestrator:
                 # Procesar con nuevo agente con try/except
                 try:
                     response = await next_agent.process(response.state)
+                    log.info(
+                        "transfer_completed",
+                        to_agent=next_agent_name,
+                        should_transfer=response.should_transfer
+                    )
                 except Exception as e:
-                    logger.error(
-                        f"Error en transferencia a '{next_agent_name}': {e}",
+                    log.error(
+                        "transfer_failed",
+                        to_agent=next_agent_name,
+                        error=str(e),
+                        error_type=type(e).__name__,
                         exc_info=True
                     )
                     # Detener transferencias en caso de error
@@ -208,26 +287,36 @@ class AgentOrchestrator:
 
             # Logs finales
             if transfer_count >= max_transfers:
-                logger.warning(
-                    f"⚠️ Máximo de transferencias alcanzado ({max_transfers})"
+                log.warning(
+                    "max_transfers_reached",
+                    max_transfers=max_transfers,
+                    final_agent=response.agent_name
                 )
 
             if transfer_history:
-                logger.info(
-                    f"✅ Flujo de transferencias: "
-                    f"{' -> '.join(transfer_history)} -> {response.agent_name}"
+                log.info(
+                    "transfer_flow_completed",
+                    transfer_chain=" -> ".join(transfer_history),
+                    final_agent=response.agent_name,
+                    total_transfers=transfer_count
                 )
 
-            logger.info(
-                f"Query procesado por agente final: {response.agent_name}"
+            log.info(
+                "query_completed",
+                final_agent=response.agent_name,
+                has_transfers=bool(transfer_history),
+                response_length=len(response.message)
             )
 
             return response
 
         except Exception as e:
             # Error crítico en orchestrator - respuesta de emergencia
-            logger.error(
-                f"💥 Error crítico en Orchestrator procesando '{query[:50]}...': {e}",
+            self.self.logger.error(
+                "orchestrator_critical_failure",
+                query=query[:100],
+                error=str(e),
+                error_type=type(e).__name__,
                 exc_info=True
             )
 
@@ -322,7 +411,7 @@ Responde SOLO con un JSON válido en este formato:
                 HumanMessage(content=user_prompt),
             ]
 
-            logger.debug("Llamando a LLM para clasificar intención...")
+            self.logger.debug("Llamando a LLM para clasificar intención...")
 
             response = await asyncio.wait_for(
                 self.llm_provider.model.ainvoke(messages),
@@ -343,7 +432,7 @@ Responde SOLO con un JSON válido en este formato:
             # Validar campos
             intent = result.get("intent", "persuasion")
             if intent not in ["search", "persuasion", "checkout", "info"]:
-                logger.warning(f"Intención inválida del LLM: {intent}")
+                self.logger.warning(f"Intención inválida del LLM: {intent}")
                 intent = "persuasion"
 
             confidence = float(result.get("confidence", 0.8))
@@ -357,7 +446,7 @@ Responde SOLO con un JSON válido en este formato:
                 "info": "sales",
             }
 
-            logger.info(
+            self.logger.info(
                 f"LLM clasificó como '{intent}' (confianza: {confidence:.2f}): {reasoning}"
             )
 
@@ -369,17 +458,17 @@ Responde SOLO con un JSON válido en este formato:
             )
 
         except asyncio.TimeoutError:
-            logger.warning("LLM timeout en clasificación de intención, usando keywords")
+            self.logger.warning("LLM timeout en clasificación de intención, usando keywords")
             return await self._classify_intent_keywords(state)
 
         except json.JSONDecodeError as e:
-            logger.warning(
+            self.logger.warning(
                 f"Error parseando JSON del LLM: {e}, usando keywords"
             )
             return await self._classify_intent_keywords(state)
 
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error en clasificación LLM: {str(e)}, usando keywords",
                 exc_info=True,
             )
@@ -460,7 +549,7 @@ Determina el estilo predominante basándote en el tono, vocabulario y estructura
                 HumanMessage(content=user_prompt),
             ]
 
-            logger.debug("Llamando a LLM para detectar estilo...")
+            self.logger.debug("Llamando a LLM para detectar estilo...")
 
             response = await asyncio.wait_for(
                 self.llm_provider.model.ainvoke(messages),
@@ -481,13 +570,13 @@ Determina el estilo predominante basándote en el tono, vocabulario y estructura
             # Validar campos
             style = result.get("style", "neutral")
             if style not in ["cuencano", "juvenil", "formal", "neutral"]:
-                logger.warning(f"Estilo inválido del LLM: {style}")
+                self.logger.warning(f"Estilo inválido del LLM: {style}")
                 style = "neutral"
 
             confidence = float(result.get("confidence", 0.8))
             reasoning = result.get("reasoning", "LLM analysis")
 
-            logger.info(
+            self.logger.info(
                 f"LLM detectó estilo '{style}' (confianza: {confidence:.2f}): {reasoning}"
             )
 
@@ -499,17 +588,17 @@ Determina el estilo predominante basándote en el tono, vocabulario y estructura
             )
 
         except asyncio.TimeoutError:
-            logger.warning("LLM timeout en detección de estilo, usando patterns")
+            self.logger.warning("LLM timeout en detección de estilo, usando patterns")
             return await self._detect_user_style_keywords(state)
 
         except json.JSONDecodeError as e:
-            logger.warning(
+            self.logger.warning(
                 f"Error parseando JSON del LLM: {e}, usando patterns"
             )
             return await self._detect_user_style_keywords(state)
 
         except Exception as e:
-            logger.error(
+            self.logger.error(
                 f"Error en detección de estilo LLM: {str(e)}, usando patterns",
                 exc_info=True,
             )
