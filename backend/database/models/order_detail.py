@@ -135,7 +135,8 @@ class OrderDetail(Base):
         Returns:
             Cantidad × Precio unitario - Descuento
         """
-        return (self.unit_price * self.quantity) - self.discount_amount
+        discount = self.discount_amount or Decimal("0.0")
+        return (self.unit_price * self.quantity) - discount
     
     @property
     def total_without_discount(self) -> Decimal:

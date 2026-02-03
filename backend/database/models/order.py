@@ -278,11 +278,16 @@ class Order(Base):
         ) if self.details else Decimal("0.0")
         
         # Calcular total: subtotal + impuestos + envío - descuentos
+        # Usar or Decimal("0") para manejar valores None en memoria
+        tax = self.tax_amount or Decimal("0")
+        shipping = self.shipping_cost or Decimal("0")
+        discount = self.discount_amount or Decimal("0")
+        
         self.total_amount = (
             self.subtotal 
-            + self.tax_amount 
-            + self.shipping_cost 
-            - self.discount_amount
+            + tax 
+            + shipping 
+            - discount
         )
         
         # Asegurar que no sea negativo
