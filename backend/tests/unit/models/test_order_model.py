@@ -32,21 +32,32 @@ class TestOrderModel:
         assert order.status == OrderStatus.DRAFT
         assert order.total_amount == Decimal("100.00")
     
-    async def test_order_status_transitions(self, test_order: Order):
+    async def test_order_status_transitions(self, clean_db: AsyncSession, test_user: User):
         """Test de transiciones de estado válidas."""
+        # Crear pedido en DRAFT para probar transiciones
+        order = Order(
+            user_id=test_user.id,
+            status=OrderStatus.DRAFT,
+            shipping_address="Av. Test 123",
+            subtotal=Decimal("100.00"),
+            total_amount=Decimal("100.00"),
+        )
+        clean_db.add(order)
+        await clean_db.commit()
+        
         # DRAFT -> CONFIRMED
-        assert test_order.can_transition_to(OrderStatus.CONFIRMED) is True
-        assert test_order.can_transition_to(OrderStatus.CANCELLED) is True
+        assert order.can_transition_to(OrderStatus.CONFIRMED) is True
+        assert order.can_transition_to(OrderStatus.CANCELLED) is True
         
         # CONFIRMED -> PAID
-        test_order.status = OrderStatus.CONFIRMED
-        assert test_order.can_transition_to(OrderStatus.PAID) is True
-        assert test_order.can_transition_to(OrderStatus.CANCELLED) is True
+        order.status = OrderStatus.CONFIRMED
+        assert order.can_transition_to(OrderStatus.PAID) is True
+        assert order.can_transition_to(OrderStatus.CANCELLED) is True
         
         # DELIVERED no puede ir a ningún estado
-        test_order.status = OrderStatus.DELIVERED
-        assert test_order.can_transition_to(OrderStatus.PAID) is False
-        assert test_order.can_transition_to(OrderStatus.CANCELLED) is False
+        order.status = OrderStatus.DELIVERED
+        assert order.can_transition_to(OrderStatus.PAID) is False
+        assert order.can_transition_to(OrderStatus.CANCELLED) is False
     
     async def test_order_is_editable(self, test_order: Order):
         """Test de la propiedad is_editable."""
@@ -102,19 +113,40 @@ class TestOrderModel:
         assert order.subtotal == Decimal("130.00")  # 2*50 + 1*30
         assert order.total_amount == Decimal("130.00")  # Sin impuestos/envío
     
-    async def test_order_with_discount(self, clean_db: AsyncSession, test_user: User):
+    async def test_order_with_discount(self, clean_db: AsyncSession, test_user: User, test_product: ProductStock):
         """Test de pedido con descuento."""
+        # Crear pedido con detalles para probar el cálculo completo
         order = Order(
             user_id=test_user.id,
             status=OrderStatus.DRAFT,
             shipping_address="Av. Test",
-            subtotal=Decimal("100.00"),
             discount_amount=Decimal("10.00"),
             tax_amount=Decimal("12.00"),
             shipping_cost=Decimal("5.00"),
         )
+        clean_db.add(order)
+        await clean_db.flush()  # Genera el ID del order
+        
+        # Crear detalle del pedido con discount_amount explícito
+        detail = OrderDetail(
+            order_id=order.id,
+            product_id=test_product.id,
+            product_name=test_product.product_name,
+            quantity=1,
+            unit_price=Decimal("100.00"),
+            discount_amount=Decimal("0.00"),  # Evitar None
+        )
+        clean_db.add(detail)
+        await clean_db.commit()
+        
+        # Refrescar para cargar la relación details
+        await clean_db.refresh(order)
+        
+        # Ahora calcular totales
         order.calculate_totals()
         
+        # Subtotal = 100 - 0 = 100
+        assert order.subtotal == Decimal("100.00")
         # Total = 100 + 12 + 5 - 10 = 107
         assert order.total_amount == Decimal("107.00")
 
