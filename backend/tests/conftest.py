@@ -3,6 +3,7 @@ Configuración global de pytest para el backend.
 Define fixtures compartidos entre todos los tests.
 """
 import asyncio
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,32 @@ os.environ.setdefault("PG_URL", "postgresql+asyncpg://postgres:postgres@localhos
 os.environ.setdefault("LOG_LEVEL", "ERROR")
 os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("REDIS_PORT", "6379")
+
+# Configurar logging básico para tests (evita problemas con structlog)
+logging.basicConfig(level=logging.ERROR)
+
+# Importar y reconfigurar structlog para tests
+# Esto DEBE hacerse antes de importar cualquier módulo que use get_logger
+import structlog
+import sys
+
+# Reconfigurar structlog con una configuración segura para tests
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.dev.ConsoleRenderer(colors=False)  # Sin colores para tests
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),  # Usar LoggerFactory en lugar de PrintLoggerFactory
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=False,  # Deshabilitar cache para evitar problemas
+)
 
 from backend.database.models.base import Base
 from backend.database.models import (
@@ -48,6 +75,10 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 async def db_engine():
     """Crea el motor de BD para tests (una sola vez por sesión)."""
     database_url = os.getenv("PG_URL")
+    
+    # Verificar y crear la base de datos si no existe
+    await ensure_test_database_exists(database_url)
+    
     engine = create_async_engine(
         database_url,
         poolclass=NullPool,  # Sin pool para tests
@@ -60,10 +91,45 @@ async def db_engine():
     
     yield engine
     
-    # Limpiar al final
+    # Limpiar al final - solo tablas, no la BD
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+async def ensure_test_database_exists(database_url: str):
+    """Verifica que la base de datos de tests exista, la crea si no."""
+    from sqlalchemy import text
+    
+    # Extraer el nombre de la base de datos de la URL
+    # postgresql+asyncpg://user:pass@host:port/dbname
+    db_name = database_url.rsplit("/", 1)[-1]
+    base_url = database_url.rsplit("/", 1)[0]
+    admin_url = f"{base_url}/postgres"
+    
+    try:
+        # Conectar a postgres (base de datos admin)
+        admin_engine = create_async_engine(admin_url, echo=False)
+        
+        async with admin_engine.connect() as conn:
+            # Verificar si la BD existe
+            result = await conn.execute(
+                text(f"SELECT 1 FROM pg_database WHERE datname = '{db_name}'")
+            )
+            exists = result.scalar()
+            
+            if not exists:
+                print(f"\n⚠️  Base de datos '{db_name}' no existe. Creándola...")
+                await conn.execute(text("COMMIT"))
+                await conn.execute(text(f"CREATE DATABASE {db_name}"))
+                print(f"✅ Base de datos '{db_name}' creada")
+        
+        await admin_engine.dispose()
+        
+    except Exception as e:
+        print(f"\n⚠️  No se pudo verificar/crear la base de datos: {e}")
+        print(f"   Asegúrate de que PostgreSQL esté corriendo y accesible.")
+        print(f"   URL intentada: {admin_url}")
 
 
 @pytest_asyncio.fixture
