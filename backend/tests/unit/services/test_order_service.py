@@ -166,6 +166,7 @@ class TestOrderServiceStatus:
     
     async def test_update_order_status_success(
         self,
+        clean_db: AsyncSession,
         order_service: OrderService,
         test_order: Order,
     ):
@@ -176,6 +177,9 @@ class TestOrderServiceStatus:
         )
         
         assert success is True
+        
+        # Refrescar el objeto para obtener los cambios de la BD
+        await clean_db.refresh(test_order)
         assert test_order.status == OrderStatus.PAID
         assert test_order.payment_status == "COMPLETED"
     
@@ -202,6 +206,13 @@ class TestOrderServiceStatus:
         test_product: ProductStock,
     ):
         """Test de cancelación de pedido."""
+        # Limpiar detalles existentes del fixture (si los hay)
+        # y crear nuestro propio detalle con cantidad conocida
+        from sqlalchemy import delete
+        await clean_db.execute(
+            delete(OrderDetail).where(OrderDetail.order_id == test_order.id)
+        )
+        
         # Crear detalle para verificar restauración de stock
         detail = OrderDetail(
             order_id=test_order.id,

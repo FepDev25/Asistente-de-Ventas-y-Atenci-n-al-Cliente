@@ -132,9 +132,10 @@ class TestCheckoutFlow:
         assert response.metadata.get("success") is True
         
         # Verificar stock de ambos productos
-        for product in test_products:
+        expected_stocks = [9, 4]  # 10 - 1, 5 - 1 (según fixture test_products)
+        for i, product in enumerate(test_products):
             await clean_db.refresh(product)
-            assert product.quantity_available == 9  # 10 - 1
+            assert product.quantity_available == expected_stocks[i]
     
     async def test_checkout_flow_cancellation_restores_stock(
         self,
