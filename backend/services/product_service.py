@@ -245,8 +245,16 @@ class ProductService:
         """
         try:
             async with self.session_factory() as session:
-                # Buscar el producto
-                product = await self.get_product_by_name(product_name)
+                # Buscar el producto directamente en esta sesión
+                query = (
+                    select(ProductStock)
+                    .where(
+                        ProductStock.product_name.ilike(f"%{product_name}%"),
+                        ProductStock.is_active == True
+                    )
+                )
+                result = await session.execute(query)
+                product = result.scalar_one_or_none()
 
                 if not product:
                     self.logger.warning(f"Producto no encontrado: '{product_name}'")
