@@ -38,3 +38,5 @@ docs/
 Thumbs.db
 
 frontend/node_modules/
+
+__pycache__/
