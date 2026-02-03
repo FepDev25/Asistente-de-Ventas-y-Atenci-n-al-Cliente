@@ -42,10 +42,13 @@ def configure_structlog(json_logs: bool = None):
         json_logs: Si True, usa formato JSON. Si None, detecta automáticamente
                    (JSON en producción, pretty print en desarrollo)
     """
+    # Detectar si estamos en modo test
+    is_testing = os.getenv("PYTEST_CURRENT_TEST") is not None or "pytest" in sys.modules
+    
     # Detectar si usar JSON basado en ambiente
     if json_logs is None:
         environment = os.getenv("ENVIRONMENT", "development")
-        json_logs = environment in ["production", "staging"]
+        json_logs = environment in ["production", "staging"] and not is_testing
 
     # Procesadores comunes para ambos formatos
     shared_processors: list[Processor] = [
@@ -83,6 +86,9 @@ def configure_structlog(json_logs: bool = None):
             )
         ]
 
+    # Usar stdlib LoggerFactory en tests para evitar problemas con PrintLogger
+    logger_factory = structlog.stdlib.LoggerFactory() if is_testing else structlog.PrintLoggerFactory(file=sys.stdout)
+    
     structlog.configure(
         processors=processors,
         # Wrapper para stdlib logging
@@ -90,9 +96,9 @@ def configure_structlog(json_logs: bool = None):
         # Context class que permite bind()
         context_class=dict,
         # Logger factory
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
-        # Cache para performance
-        cache_logger_on_first_use=True,
+        logger_factory=logger_factory,
+        # Cache para performance (deshabilitar en tests)
+        cache_logger_on_first_use=not is_testing,
     )
 
 
