@@ -1,7 +1,29 @@
 import asyncio
-import dotenv
-from sqlalchemy import text
+import os
+from pathlib import Path
 from decimal import Decimal
+
+# Cargar explícitamente las variables de entorno PRIMERO
+import dotenv
+
+# Buscar el archivo .env en el directorio actual
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    dotenv.load_dotenv(dotenv_path=env_path, override=True)
+    print(f"✓ Cargado .env desde: {env_path}")
+else:
+    dotenv.load_dotenv(override=True)
+    print("✓ Cargado .env desde ruta por defecto")
+
+# Verificar que SECRET_KEY esté configurada
+if not os.getenv("SECRET_KEY"):
+    print("⚠️  SECRET_KEY no encontrada en variables de entorno")
+    print("   Usando valor por defecto para desarrollo...")
+    os.environ["SECRET_KEY"] = "super-secret-key-for-dev-only-2026"
+    os.environ["JWT_SECRET"] = "super-secret-key-for-dev-only-2026"
+
+# Ahora importar los módulos del backend
+from sqlalchemy import text
 from backend.database.connection import get_engine
 from backend.database.models.base import Base
 from backend.database.models.order import Order, OrderStatus
@@ -10,9 +32,6 @@ from backend.database.models.product_stock import ProductStock
 from backend.database.models.user_model import User
 from backend.database.session import get_session_factory
 from backend.config.security import securityJWT
-
-# Cargar explícitamente las variables de entorno
-dotenv.load_dotenv()
 
 
 
@@ -134,12 +153,28 @@ async def init_database():
 
         if count == 0:
             print("Insertando usuarios iniciales...")
+            # Hashes pre-calculados para evitar problemas con bcrypt
+            # admin123 -> $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/IiK
+            # cliente123 -> $2b$12$qPVT1fJNVzdOQQK5XxQzQOAaD8jhz/I9J7lYkQqxzDZmOpm5KGh2q
+            from backend.config.security.securityJWT import pwd_context
             for usr in USUARIOS_INICIALES:
+                try:
+                    # Intentar usar bcrypt normalmente
+                    password = usr["password"][:72]
+                    password_hash = pwd_context.hash(password)
+                except Exception as e:
+                    # Fallback: usar hash pre-calculado
+                    print(f"   ⚠️  Usando hash pre-calculado para {usr['username']}")
+                    if usr['username'] == 'admin':
+                        password_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/IiK"
+                    else:
+                        password_hash = "$2b$12$qPVT1fJNVzdOQQK5XxQzQOAaD8jhz/I9J7lYkQqxzDZmOpm5KGh2q"
+                
                 nuevo_usuario = User(
                     username=usr["username"],
                     email=usr["email"],
                     full_name=usr["full_name"],
-                    password_hash=securityJWT.hash_password(usr["password"]),
+                    password_hash=password_hash,
                     role=usr["role"],
                     is_active=True
                 )
