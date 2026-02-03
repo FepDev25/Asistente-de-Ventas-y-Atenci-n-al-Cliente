@@ -24,7 +24,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const userData = authAPI.getUserFromToken();
         if (userData) {
           setUser(userData);
-          // Guardar en localStorage para persistencia
           localStorage.setItem('user', JSON.stringify(userData));
         }
       }
@@ -34,12 +33,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkAuth();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (identifier: string, password: string) => {
     try {
       setIsLoading(true);
       
-      // Llamar al API de login
-      const response = await authAPI.login(email, password);
+      // Llamar al API de login con identifier (puede ser email o username)
+      const response = await authAPI.login(identifier, password);
       
       // Decodificar el token para obtener la información del usuario
       const userData = authAPI.getUserFromToken();

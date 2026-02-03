@@ -30,7 +30,7 @@ export interface Message {
 
 export interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>; // ✅ Cambiado de email a identifier
   logout: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;

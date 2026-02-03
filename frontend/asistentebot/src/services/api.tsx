@@ -41,13 +41,23 @@ api.interceptors.response.use(
 
 // Auth API
 export const authAPI = {
-  login: async (email: string, password: string): Promise<LoginResponse> => {
-    const credentials: LoginCredentials = { email, password };
+  login: async (identifier: string, password: string): Promise<LoginResponse> => {
+    // Detectar si es email o username
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier);
+    
+    const credentials: LoginCredentials = {
+      ...(isEmail ? { email: identifier } : { username: identifier }),
+      password
+    };
+    
+    console.log('🔐 Intentando login con:', isEmail ? 'email' : 'username', identifier);
+    
     const response = await api.post<LoginResponse>('/auth/login', credentials);
     
     // Guardar token
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token);
+      console.log('✅ Token guardado correctamente');
     }
     
     return response.data;

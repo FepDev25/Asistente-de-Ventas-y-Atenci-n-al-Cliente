@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import './login.css';
 
 const Login: React.FC = () => {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState(''); // Puede ser email o username
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -18,21 +18,14 @@ const Login: React.FC = () => {
     setError('');
     
     // Validación básica
-    if (!email || !password) {
+    if (!identifier || !password) {
       setError('Por favor completa todos los campos');
-      return;
-    }
-
-    // Validación de formato de email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      setError('Por favor ingresa un correo electrónico válido');
       return;
     }
 
     try {
       setIsLoading(true);
-      await login(email, password);
+      await login(identifier, password);
       
       // Redirigir a la tienda después del login exitoso
       navigate('/tienda');
@@ -43,7 +36,7 @@ const Login: React.FC = () => {
       if (err.response) {
         switch (err.response.status) {
           case 401:
-            setError('Credenciales inválidas. Verifica tu email y contraseña.');
+            setError('Credenciales inválidas. Verifica tu usuario/email y contraseña.');
             break;
           case 403:
             setError('Usuario desactivado. Contacte al administrador.');
@@ -77,15 +70,15 @@ const Login: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="form-group">
-            <label htmlFor="email">Correo electrónico</label>
+            <label htmlFor="identifier">Usuario o Email</label>
             <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="tu@email.com"
+              type="text"
+              id="identifier"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="usuario o tu@email.com"
               disabled={isLoading}
-              autoComplete="email"
+              autoComplete="username"
               required
             />
           </div>
