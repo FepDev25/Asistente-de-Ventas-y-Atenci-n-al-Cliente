@@ -1,8 +1,8 @@
 // src/services/api.ts
 import axios from 'axios';
-import type { User, Product, Message } from '../types/types';
+import type { User, Product, Message, LoginResponse, LoginCredentials } from '../types/types';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -14,7 +14,7 @@ const api = axios.create({
 // Interceptor para agregar el token a cada petición
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -25,16 +25,79 @@ api.interceptors.request.use(
   }
 );
 
+// Interceptor para manejar respuestas y errores
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expirado o inválido
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Auth API
 export const authAPI = {
-  login: async (email: string, password: string): Promise<User> => {
-    const response = await api.post('/auth/login', { email, password });
+  login: async (email: string, password: string): Promise<LoginResponse> => {
+    const credentials: LoginCredentials = { email, password };
+    const response = await api.post<LoginResponse>('/auth/login', credentials);
+    
+    // Guardar token
+    if (response.data.access_token) {
+      localStorage.setItem('access_token', response.data.access_token);
+    }
+    
     return response.data;
   },
   
-  register: async (name: string, email: string, password: string): Promise<User> => {
-    const response = await api.post('/auth/register', { name, email, password });
+  register: async (username: string, email: string, password: string) => {
+    const response = await api.post('/auth/register', { username, email, password });
     return response.data;
+  },
+
+  logout: () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('user');
+  },
+
+  isAuthenticated: (): boolean => {
+    return !!localStorage.getItem('access_token');
+  },
+
+  getToken: (): string | null => {
+    return localStorage.getItem('access_token');
+  },
+
+  getUserFromToken: (): User | null => {
+    const token = authAPI.getToken();
+    if (!token) return null;
+
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      );
+
+      const payload = JSON.parse(jsonPayload);
+      
+      // El payload contiene: id, username, email, role
+      return {
+        id: payload.id,
+        username: payload.username,
+        email: payload.email,
+        role: payload.role
+      };
+    } catch (error) {
+      console.error('Error decodificando token:', error);
+      return null;
+    }
   },
 };
 
