@@ -50,7 +50,7 @@ class AgentOrchestrator:
         self.logger = get_logger("orchestrator")
 
         detection_method = "LLM Zero-shot" if use_llm_detection else "Keywords"
-        self.self.logger.info(
+        self.logger.info(
             "orchestrator_initialized",
             agent_count=len(self.agents),
             detection_method=detection_method,
