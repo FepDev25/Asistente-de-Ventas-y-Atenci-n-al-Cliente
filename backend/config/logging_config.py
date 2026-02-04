@@ -58,8 +58,8 @@ def configure_structlog(json_logs: bool = None):
         # Agrega nivel de log
         structlog.stdlib.add_log_level,
 
-        # Agrega nombre del logger
-        structlog.stdlib.add_logger_name,
+        # NOTA: add_logger_name removido porque falla con PrintLogger
+        # structlog.stdlib.add_logger_name,
 
         # Agrega contexto de aplicación
         add_app_context,
