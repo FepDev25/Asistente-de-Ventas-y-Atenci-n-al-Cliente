@@ -1,20 +1,18 @@
 // src/components/Store/Store.tsx
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
-import type { Product } from '../types/types';
-import { productsAPI } from '../services/api';
+import { productService } from '../services/graphqlservices';
+import type { Product } from '../services/graphqlservices';
 import ProductCard from './productcard';
 import './store.css';
-import { FiShoppingCart, FiLogOut } from 'react-icons/fi';
+import { FiShoppingCart, FiSearch, FiX } from 'react-icons/fi';
 
 const Store: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [cartCount, setCartCount] = useState(0);
-  
+  const [searchFocused, setSearchFocused] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -22,174 +20,176 @@ const Store: React.FC = () => {
 
   useEffect(() => {
     filterProducts();
-  }, [searchTerm, selectedCategory, products]);
+  }, [searchTerm, products]);
 
   const loadProducts = async () => {
     try {
       setIsLoading(true);
-      // Si no hay conexión con el backend, usa datos de ejemplo
-      const data = await productsAPI.getAll().catch(() => getMockProducts());
-      setProducts(data);
-      setFilteredProducts(data);
+      // Llamada a GraphQL listProducts
+      const data = await productService.listProducts(100);
+      
+      // Transformar datos de GraphQL a formato del componente
+      const transformedProducts: Product[] = data.map(p => ({
+        id: p.id,
+        productName: p.productName,
+        unitCost: p.unitCost,
+        quantityAvailable: p.quantityAvailable,
+        stockStatus: p.stockStatus,
+        warehouseLocation: p.warehouseLocation,
+        shelfLocation: p.shelfLocation || '',
+        batchNumber: p.batchNumber || ''
+      }));
+
+      setProducts(transformedProducts);
+      setFilteredProducts(transformedProducts);
     } catch (error) {
       console.error('Error cargando productos:', error);
-      setProducts(getMockProducts());
-      setFilteredProducts(getMockProducts());
     } finally {
       setIsLoading(false);
     }
   };
 
   const filterProducts = () => {
-    let filtered = products;
-
-    if (selectedCategory !== 'Todos') {
-      filtered = filtered.filter(p => p.category === selectedCategory);
+    if (!searchTerm.trim()) {
+      setFilteredProducts(products);
+      return;
     }
 
-    if (searchTerm) {
-      filtered = filtered.filter(p => 
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
+    const term = searchTerm.toLowerCase();
+    const filtered = products.filter(p =>
+      p.productName.toLowerCase().includes(term) ||
+      (p.batchNumber && p.batchNumber.toLowerCase().includes(term)) ||
+      (p.warehouseLocation && p.warehouseLocation.toLowerCase().includes(term))
+    );
 
     setFilteredProducts(filtered);
   };
 
-  const categories = ['Todos', ...Array.from(new Set(products.map(p => p.category)))];
-
   const handleAddToCart = (product: Product) => {
     setCartCount(prev => prev + 1);
-    // Aquí puedes agregar lógica adicional del carrito
-    console.log('Producto agregado:', product);
+    console.log('Producto agregado al carrito:', product.productName);
+    // TODO: Implementar lógica completa del carrito
   };
+
+  const clearSearch = () => {
+    setSearchTerm('');
+    setSearchFocused(false);
+  };
+
+  const availableCount = filteredProducts.filter(p => p.stockStatus === 1).length;
+  const outOfStockCount = filteredProducts.filter(p => p.stockStatus === 0).length;
+
+  if (isLoading) {
+    return (
+      <div className="store-loading">
+        <div className="loading-spinner"></div>
+        <p className="loading-text">Cargando inventario...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="store-container">
-      {/* Header */}
+      {/* Header Minimalista */}
       <header className="store-header">
-        <div className="header-content">
-          <div className="header-left">
-            <h1>Mi Tienda</h1>
-            <p>Hola</p>
+        <div className="header-grid">
+          <div className="brand">
+            <h1 className="store-title">SNEAKER<br/>ZONE</h1>
+            <p className="store-subtitle">CUENCA · ECUADOR</p>
           </div>
-          <div className="header-right">
-            <button className="cart-button">
-              <FiShoppingCart size={24} />
-              {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
-            </button>
-            <button className="logout-button">
-              <FiLogOut size={24} />
-            </button>
+
+          <div className="header-stats">
+            <div className="stat">
+              <span className="stat-value">{filteredProducts.length}</span>
+              <span className="stat-label">Productos</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{availableCount}</span>
+              <span className="stat-label">Disponibles</span>
+            </div>
           </div>
+
+          <button className="cart-button" aria-label="Carrito de compras">
+            <FiShoppingCart />
+            {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
+          </button>
         </div>
       </header>
 
-      {/* Barra de búsqueda */}
+      {/* Search Bar con animación */}
       <div className="search-section">
-        <input
-          type="text"
-          placeholder="Buscar productos..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="search-input"
-        />
-      </div>
-
-      {/* Filtros de categorías */}
-      <div className="categories-section">
-        <div className="categories-scroll">
-          {categories.map((category) => (
-            <button
-              key={category}
-              className={`category-chip ${selectedCategory === category ? 'active' : ''}`}
-              onClick={() => setSelectedCategory(category)}
+        <div className={`search-wrapper ${searchFocused ? 'focused' : ''}`}>
+          <FiSearch className="search-icon" />
+          <input
+            type="text"
+            placeholder="Buscar por modelo, marca o ubicación..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            className="search-input"
+          />
+          {searchTerm && (
+            <button 
+              className="search-clear" 
+              onClick={clearSearch}
+              aria-label="Limpiar búsqueda"
             >
-              {category}
+              <FiX />
             </button>
-          ))}
+          )}
         </div>
+
+        {searchTerm && (
+          <div className="search-results-info">
+            {filteredProducts.length} resultado{filteredProducts.length !== 1 ? 's' : ''} 
+            {filteredProducts.length > 0 && ` · ${availableCount} disponible${availableCount !== 1 ? 's' : ''}`}
+          </div>
+        )}
       </div>
 
       {/* Grid de productos */}
-      <div className="products-section">
-        {isLoading ? (
-          <div className="loading">Cargando productos...</div>
-        ) : filteredProducts.length === 0 ? (
-          <div className="no-products">No se encontraron productos</div>
+      <main className="products-section">
+        {filteredProducts.length === 0 ? (
+          <div className="no-results">
+            <div className="no-results-icon">∅</div>
+            <h2 className="no-results-title">Sin resultados</h2>
+            <p className="no-results-text">
+              No encontramos productos que coincidan con "{searchTerm}"
+            </p>
+            <button className="no-results-button" onClick={clearSearch}>
+              Ver todos los productos
+            </button>
+          </div>
         ) : (
           <div className="products-grid">
-            {filteredProducts.map((product) => (
+            {filteredProducts.map((product, index) => (
               <ProductCard
                 key={product.id}
                 product={product}
                 onAddToCart={handleAddToCart}
+                index={index}
               />
             ))}
           </div>
         )}
-      </div>
+      </main>
+
+      {/* Footer minimalista */}
+      <footer className="store-footer">
+        <div className="footer-content">
+          <p>© 2026 SneakerZone · Cuenca, Ecuador</p>
+          <div className="footer-links">
+            <a href="#terms">Términos</a>
+            <span>·</span>
+            <a href="#privacy">Privacidad</a>
+            <span>·</span>
+            <a href="#contact">Contacto</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };
-
-// Datos de ejemplo para desarrollo
-const getMockProducts = (): Product[] => [
-  {
-    id: '1',
-    name: 'Laptop Gaming',
-    description: 'Laptop de alto rendimiento para gaming',
-    price: 1299.99,
-    image: 'https://via.placeholder.com/300x200?text=Laptop',
-    category: 'Electrónica',
-    stock: 10
-  },
-  {
-    id: '2',
-    name: 'Mouse Inalámbrico',
-    description: 'Mouse ergonómico con 6 botones',
-    price: 29.99,
-    image: 'https://via.placeholder.com/300x200?text=Mouse',
-    category: 'Accesorios',
-    stock: 50
-  },
-  {
-    id: '3',
-    name: 'Teclado Mecánico',
-    description: 'Teclado mecánico RGB',
-    price: 89.99,
-    image: 'https://via.placeholder.com/300x200?text=Teclado',
-    category: 'Accesorios',
-    stock: 30
-  },
-  {
-    id: '4',
-    name: 'Monitor 27"',
-    description: 'Monitor Full HD 144Hz',
-    price: 299.99,
-    image: 'https://via.placeholder.com/300x200?text=Monitor',
-    category: 'Electrónica',
-    stock: 15
-  },
-  {
-    id: '5',
-    name: 'Auriculares Gaming',
-    description: 'Auriculares con sonido 7.1',
-    price: 79.99,
-    image: 'https://via.placeholder.com/300x200?text=Auriculares',
-    category: 'Accesorios',
-    stock: 25
-  },
-  {
-    id: '6',
-    name: 'Webcam HD',
-    description: 'Webcam 1080p con micrófono',
-    price: 49.99,
-    image: 'https://via.placeholder.com/300x200?text=Webcam',
-    category: 'Accesorios',
-    stock: 20
-  }
-];
 
 export default Store;
