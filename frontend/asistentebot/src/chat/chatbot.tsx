@@ -1,7 +1,9 @@
-// chatbot.tsx - MEJORADO con Markdown y Diseño Brutal Minimalista
+// chatbot.tsx - CON INTEGRACIÓN DE ÓRDENES
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { chatService, ragService } from '../services/graphqlservices';
+import { useNavigate } from 'react-router-dom';
+import { chatService, ragService, authService } from '../services/graphqlservices';
+import { useOrderCreation } from '../services/userordercreation';
 import type { SemanticSearchResult, RAGDoc } from '../services/graphqlservices';
 import './chatbot.css';
 import {
@@ -12,7 +14,10 @@ import {
   FiRefreshCw,
   FiFileText,
   FiCheck,
-  FiClock
+  FiClock,
+  FiShoppingCart,
+  FiPackage,
+  FiTrash2
 } from 'react-icons/fi';
 
 interface Message {
@@ -23,6 +28,12 @@ interface Message {
   error?: string | null;
   ragDocs?: RAGDoc[];
   status?: 'sending' | 'sent' | 'error';
+  metadata?: {
+    type?: 'order_confirmation' | 'order_created' | 'error' | 'cart_updated';
+    order_id?: string;
+    order_total?: number;
+    products_added?: CartItem[];
+  };
 }
 
 interface QuickAction {
@@ -31,12 +42,20 @@ interface QuickAction {
   message: string;
 }
 
+interface CartItem {
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+}
+
 const ChatBot: React.FC = () => {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
+      text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Agregar productos al carrito\n- Realizar pedidos\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
       sender: 'bot',
       timestamp: new Date(),
       status: 'sent'
@@ -46,16 +65,42 @@ const ChatBot: React.FC = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [showRagDocs, setShowRagDocs] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  
+  // Estados para el carrito y checkout
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [showCart, setShowCart] = useState(false);
+  const [checkoutFlow, setCheckoutFlow] = useState<{
+    active: boolean;
+    step: 'address' | 'confirm' | 'processing' | null;
+    shippingAddress?: string;
+    contactName?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+  }>({
+    active: false,
+    step: null
+  });
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
+
+  // Hook de creación de órdenes
+  const { 
+    isCreating, 
+    error: orderError, 
+    success: orderSuccess, 
+    orderResult, 
+    createOrderFromCart,
+    reset: resetOrderState 
+  } = useOrderCreation();
 
   // Quick actions para sugerencias rápidas
   const quickActions: QuickAction[] = [
     { id: '1', label: '📦 Ver productos', message: 'Muéstrame los productos disponibles' },
     { id: '2', label: '🎯 Recomendaciones', message: 'Dame recomendaciones personalizadas' },
-    { id: '3', label: '💳 Formas de pago', message: '¿Cuáles son las formas de pago?' },
-    { id: '4', label: '🚚 Envíos', message: 'Información sobre envíos' }
+    { id: '3', label: '🛒 Ver carrito', message: 'Muéstrame mi carrito' },
+    { id: '4', label: '💳 Finalizar compra', message: 'Quiero finalizar mi compra' }
   ];
 
   const scrollToBottom = () => {
@@ -83,6 +128,209 @@ const ChatBot: React.FC = () => {
     }
   }, [messages, isOpen]);
 
+  // Calcular total del carrito
+  const cartTotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+
+  const addMessage = (text: string, sender: 'user' | 'bot', metadata?: any) => {
+    const newMessage: Message = {
+      id: `msg-${Date.now()}-${Math.random()}`,
+      text,
+      sender,
+      timestamp: new Date(),
+      status: 'sent',
+      metadata
+    };
+    setMessages(prev => [...prev, newMessage]);
+  };
+
+  const detectCartUpdates = (botResponse: string, rawResponse?: any) => {
+    // Patrones para detectar productos agregados
+    // Ejemplo: "Agregué Laptop Gaming x2 (ID: abc-123, Precio: $1299.99)"
+    const addedPattern = /Agregué (.+?) x(\d+) \(ID: ([a-f0-9-]+)(?:, Precio: \$([0-9.]+))?\)/gi;
+    const matches = Array.from(botResponse.matchAll(addedPattern));
+    
+    if (matches.length > 0) {
+      const newItems: CartItem[] = matches.map(match => ({
+        product_id: match[3],
+        product_name: match[1],
+        quantity: parseInt(match[2]),
+        unit_price: parseFloat(match[4] || '0')
+      }));
+      
+      setCart(prev => {
+        const updated = [...prev];
+        newItems.forEach(newItem => {
+          const existingIndex = updated.findIndex(item => item.product_id === newItem.product_id);
+          if (existingIndex >= 0) {
+            updated[existingIndex].quantity += newItem.quantity;
+          } else {
+            updated.push(newItem);
+          }
+        });
+        return updated;
+      });
+
+      // Mensaje de confirmación
+      setTimeout(() => {
+        addMessage(
+          `✅ **Carrito actualizado**\n\nProductos en el carrito: ${cart.length + newItems.length}\nTotal: $${(cartTotal + newItems.reduce((s, i) => s + (i.unit_price * i.quantity), 0)).toFixed(2)}`,
+          'bot',
+          { type: 'cart_updated', products_added: newItems }
+        );
+      }, 500);
+    }
+
+    // También detectar si el bot menciona productos de forma estructurada
+    // (ajusta esto según cómo tu backend devuelva la info)
+  };
+
+  const detectCheckoutIntent = (userMessage: string): boolean => {
+    const checkoutKeywords = [
+      'comprar', 'ordenar', 'pedido', 'checkout',
+      'finalizar compra', 'confirmar orden', 'quiero comprar',
+      'realizar pedido', 'hacer pedido', 'proceder al pago'
+    ];
+    
+    return checkoutKeywords.some(keyword => 
+      userMessage.toLowerCase().includes(keyword)
+    );
+  };
+
+  const handleCheckoutFlow = async (userMessage: string) => {
+    const message = userMessage.trim();
+
+    // Si no hay checkout activo, iniciarlo
+    if (!checkoutFlow.active) {
+      if (cart.length === 0) {
+        addMessage(
+          '❌ **Carrito vacío**\n\nTu carrito está vacío. Primero agrega algunos productos antes de finalizar la compra.',
+          'bot'
+        );
+        return;
+      }
+
+      setCheckoutFlow({ active: true, step: 'address' });
+      addMessage(
+        '🛒 **Iniciando proceso de compra**\n\n' +
+        `Productos en tu carrito: ${cart.length}\n` +
+        `Total: $${cartTotal.toFixed(2)}\n\n` +
+        '📍 Por favor, indícame tu **dirección de envío completa**:',
+        'bot'
+      );
+      return;
+    }
+
+    // Paso 1: Capturar dirección
+    if (checkoutFlow.step === 'address') {
+      setCheckoutFlow(prev => ({ 
+        ...prev, 
+        step: 'confirm',
+        shippingAddress: message 
+      }));
+
+      addMessage(
+        '✅ **Dirección recibida**\n\n' +
+        `📍 ${message}\n\n` +
+        '📝 Opcionalmente, puedes darme:\n' +
+        '- Tu nombre completo\n' +
+        '- Tu teléfono\n' +
+        '- Tu email\n\n' +
+        'O escribe **"confirmar"** para proceder con el pedido.',
+        'bot'
+      );
+      return;
+    }
+
+    // Paso 2: Capturar datos adicionales o confirmar
+    if (checkoutFlow.step === 'confirm') {
+      if (message.toLowerCase() === 'confirmar') {
+        // Procesar la orden
+        await processOrder();
+      } else {
+        // Intentar extraer nombre, teléfono, email del mensaje
+        const emailMatch = message.match(/[\w.-]+@[\w.-]+\.\w+/);
+        const phoneMatch = message.match(/[\d\s\-()]{7,}/);
+        
+        setCheckoutFlow(prev => ({
+          ...prev,
+          contactEmail: emailMatch ? emailMatch[0] : prev.contactEmail,
+          contactPhone: phoneMatch ? phoneMatch[0] : prev.contactPhone,
+          contactName: !emailMatch && !phoneMatch ? message : prev.contactName
+        }));
+
+        addMessage(
+          '✅ **Información actualizada**\n\n' +
+          'Escribe **"confirmar"** para finalizar el pedido o continúa agregando información.',
+          'bot'
+        );
+      }
+      return;
+    }
+  };
+
+  const processOrder = async () => {
+    if (!checkoutFlow.shippingAddress) {
+      addMessage('❌ Error: No se capturó la dirección de envío', 'bot');
+      return;
+    }
+
+    setCheckoutFlow(prev => ({ ...prev, step: 'processing' }));
+    addMessage('⏳ **Procesando tu orden...**', 'bot');
+
+    const sessionId = chatService.getSessionId();
+    
+    const result = await createOrderFromCart(
+      cart,
+      {
+        address: checkoutFlow.shippingAddress,
+        contact_name: checkoutFlow.contactName,
+        contact_phone: checkoutFlow.contactPhone,
+        contact_email: checkoutFlow.contactEmail
+      },
+      sessionId
+    );
+
+    // Resetear checkout flow
+    setCheckoutFlow({ active: false, step: null });
+
+    if (result.success && result.order_id) {
+      addMessage(
+        `✅ **¡Orden creada exitosamente!**\n\n` +
+        `📋 **Número de orden:** #${result.order_id.substring(0, 8)}\n` +
+        `💰 **Total:** $${result.order_total?.toFixed(2)}\n` +
+        `📦 **Productos:** ${result.item_count}\n\n` +
+        `📍 **Envío a:** ${checkoutFlow.shippingAddress}\n\n` +
+        `Puedes ver los detalles de tu orden haciendo clic en el botón de abajo.`,
+        'bot',
+        {
+          type: 'order_created',
+          order_id: result.order_id,
+          order_total: result.order_total
+        }
+      );
+
+      // Limpiar carrito
+      setCart([]);
+      setShowCart(false);
+
+      // Ofrecer ver la orden
+      setTimeout(() => {
+        if (window.confirm('¿Quieres ver los detalles de tu orden ahora?')) {
+          navigate(`/ordenes/${result.order_id}`);
+        }
+      }, 1000);
+    } else {
+      addMessage(
+        `❌ **Error al crear la orden**\n\n` +
+        `${result.message}\n\n` +
+        `**Código de error:** ${result.error_code}\n\n` +
+        `Por favor, intenta de nuevo o contacta a soporte.`,
+        'bot',
+        { type: 'error' }
+      );
+    }
+  };
+
   const handleSendMessage = async (messageText?: string) => {
     const text = (messageText || inputMessage).trim();
     if (!text) return;
@@ -107,6 +355,16 @@ const ChatBot: React.FC = () => {
         )
       );
     }, 300);
+
+    // Detectar intención de checkout
+    const isCheckoutIntent = detectCheckoutIntent(text);
+    
+    // Si hay checkout activo o se detectó intención de compra
+    if (checkoutFlow.active || (isCheckoutIntent && cart.length > 0)) {
+      setIsTyping(false);
+      await handleCheckoutFlow(text);
+      return;
+    }
 
     try {
       // Llamar al servicio de chat
@@ -138,6 +396,9 @@ const ChatBot: React.FC = () => {
 
         setMessages(prev => [...prev, botMessage]);
         setIsTyping(false);
+
+        // Detectar actualizaciones del carrito en la respuesta
+        detectCartUpdates(response.answer, response);
       }, typingDelay);
 
     } catch (err) {
@@ -160,7 +421,39 @@ const ChatBot: React.FC = () => {
   };
 
   const handleQuickAction = (action: QuickAction) => {
-    handleSendMessage(action.message);
+    if (action.label.includes('carrito')) {
+      setShowCart(true);
+      if (cart.length > 0) {
+        addMessage(
+          `🛒 **Tu carrito**\n\n` +
+          cart.map(item => `• ${item.product_name} x${item.quantity} - $${(item.unit_price * item.quantity).toFixed(2)}`).join('\n') +
+          `\n\n**Total:** $${cartTotal.toFixed(2)}`,
+          'bot'
+        );
+      } else {
+        addMessage('Tu carrito está vacío. ¡Agrega algunos productos!', 'bot');
+      }
+    } else if (action.label.includes('Finalizar compra')) {
+      if (cart.length > 0) {
+        handleCheckoutFlow('quiero finalizar mi compra');
+      } else {
+        addMessage('❌ Tu carrito está vacío. Agrega productos primero.', 'bot');
+      }
+    } else {
+      handleSendMessage(action.message);
+    }
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart(prev => prev.filter(item => item.product_id !== productId));
+    addMessage(`✅ Producto removido del carrito`, 'bot');
+  };
+
+  const clearCart = () => {
+    if (window.confirm('¿Seguro que quieres vaciar el carrito?')) {
+      setCart([]);
+      addMessage(`🗑️ Carrito vaciado`, 'bot');
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -185,6 +478,8 @@ const ChatBot: React.FC = () => {
         status: 'sent'
       }
     ]);
+    setCheckoutFlow({ active: false, step: null });
+    resetOrderState();
   };
 
   const getErrorIcon = (error: string | null | undefined) => {
@@ -235,6 +530,9 @@ const ChatBot: React.FC = () => {
             {unreadCount > 0 && (
               <span className="chat-badge">{unreadCount}</span>
             )}
+            {cart.length > 0 && (
+              <span className="cart-badge-toggle">{cart.length}</span>
+            )}
           </>
         )}
       </button>
@@ -251,12 +549,22 @@ const ChatBot: React.FC = () => {
               <h3>Alex - Asistente de Ventas</h3>
               <p className="status">
                 <span className="status-dot"></span>
-                {isTyping ? 'Escribiendo...' : 'En línea'}
+                {isTyping ? 'Escribiendo...' : checkoutFlow.active ? 'Procesando compra...' : 'En línea'}
               </p>
             </div>
           </div>
 
           <div className="chat-header-actions">
+            {cart.length > 0 && (
+              <button
+                className={`icon-button cart-button ${showCart ? 'active' : ''}`}
+                onClick={() => setShowCart(!showCart)}
+                title="Ver carrito"
+              >
+                <FiShoppingCart size={18} />
+                <span className="cart-count">{cart.length}</span>
+              </button>
+            )}
             <button
               className={`icon-button ${showRagDocs ? 'active' : ''}`}
               onClick={() => setShowRagDocs(!showRagDocs)}
@@ -283,6 +591,59 @@ const ChatBot: React.FC = () => {
           </div>
         </div>
 
+        {/* Cart Sidebar */}
+        {showCart && cart.length > 0 && (
+          <div className="cart-sidebar">
+            <div className="cart-sidebar-header">
+              <h4>🛒 Tu Carrito</h4>
+              <button onClick={() => setShowCart(false)} className="close-cart">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="cart-items">
+              {cart.map(item => (
+                <div key={item.product_id} className="cart-item">
+                  <div className="cart-item-info">
+                    <div className="cart-item-name">{item.product_name}</div>
+                    <div className="cart-item-details">
+                      Cantidad: {item.quantity} × ${item.unit_price.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="cart-item-actions">
+                    <div className="cart-item-price">
+                      ${(item.unit_price * item.quantity).toFixed(2)}
+                    </div>
+                    <button
+                      onClick={() => removeFromCart(item.product_id)}
+                      className="remove-item"
+                      title="Eliminar"
+                    >
+                      <FiTrash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="cart-footer">
+              <div className="cart-total">
+                <strong>Total:</strong>
+                <strong>${cartTotal.toFixed(2)}</strong>
+              </div>
+              <button
+                onClick={() => handleQuickAction({ id: 'checkout', label: '💳 Finalizar compra', message: 'Quiero finalizar mi compra' })}
+                className="checkout-btn"
+                disabled={isCreating}
+              >
+                <FiPackage size={16} />
+                {isCreating ? 'Procesando...' : 'Finalizar Compra'}
+              </button>
+              <button onClick={clearCart} className="clear-cart-btn">
+                Vaciar Carrito
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <div
           className="chat-messages"
@@ -301,15 +662,11 @@ const ChatBot: React.FC = () => {
                   {message.sender === 'bot' ? (
                     <ReactMarkdown
                       components={{
-                        // Personalizar componentes de markdown
                         p: ({ node, ...props }) => <p {...props} />,
                         strong: ({ node, ...props }) => <strong {...props} />,
                         em: ({ node, ...props }) => <em {...props} />,
-                        // Lo que cambié específicamente en la línea de 'code':
                         code({ node, className, children, ...props }: any) {
                           const match = /language-(\w+)/.exec(className || '');
-
-                          // Si hay un match de lenguaje, lo tratamos como bloque (pre)
                           return match ? (
                             <pre className="code-block">
                               <code className={className} {...props}>{children}</code>
@@ -335,6 +692,18 @@ const ChatBot: React.FC = () => {
                     </ReactMarkdown>
                   ) : (
                     <p>{message.text}</p>
+                  )}
+
+                  {/* Botón especial para ver orden creada */}
+                                    {/* Botón especial para ver orden creada */}
+                  {message.metadata?.type === 'order_created' && message.metadata?.order_id && (
+                    <button
+                      className="view-order-button"
+                      onClick={() => navigate(`/ordenes/${message.metadata?.order_id}`)}
+                    >
+                      <FiPackage size={16} />
+                      Ver mi orden
+                    </button>
                   )}
 
                   <div className="message-footer">
@@ -395,7 +764,7 @@ const ChatBot: React.FC = () => {
           ))}
 
           {/* Typing Indicator */}
-          {isTyping && (
+          {(isTyping || isCreating) && (
             <div className="message bot-message">
               <div className="message-content typing">
                 <div className="typing-indicator">
@@ -403,6 +772,7 @@ const ChatBot: React.FC = () => {
                   <span></span>
                   <span></span>
                 </div>
+                {isCreating && <p style={{ fontSize: '0.85em', marginTop: '0.5rem' }}>Creando tu orden...</p>}
               </div>
             </div>
           )}
@@ -415,19 +785,25 @@ const ChatBot: React.FC = () => {
           <input
             ref={inputRef}
             type="text"
-            placeholder="Escribe tu mensaje..."
+            placeholder={
+              checkoutFlow.step === 'address' 
+                ? "Escribe tu dirección de envío..." 
+                : checkoutFlow.step === 'confirm'
+                ? 'Escribe "confirmar" o agrega más información...'
+                : "Escribe tu mensaje..."
+            }
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             onKeyPress={handleKeyPress}
             className="chat-input"
-            disabled={isTyping}
+            disabled={isTyping || isCreating}
             aria-label="Mensaje"
             autoComplete="off"
             maxLength={500}
           />
           <button
             onClick={() => handleSendMessage()}
-            disabled={!inputMessage.trim() || isTyping}
+            disabled={!inputMessage.trim() || isTyping || isCreating}
             className="send-button"
             aria-label="Enviar mensaje"
           >
@@ -440,6 +816,9 @@ const ChatBot: React.FC = () => {
           <small>Session: {chatService.getSessionId().slice(-8)}</small>
           {showRagDocs && (
             <small className="rag-mode-indicator"> • Modo RAG activo</small>
+          )}
+          {cart.length > 0 && (
+            <small className="cart-indicator"> • {cart.length} en carrito</small>
           )}
         </div>
       </div>
