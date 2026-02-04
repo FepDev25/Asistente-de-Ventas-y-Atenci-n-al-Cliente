@@ -6,6 +6,12 @@
 3. Copia cada pregunta y pégala en el chat
 4. Anota la respuesta en tu informe
 
+**⚠️ IMPORTANTE - Búsqueda de Productos:**
+- ✅ **SÍ funciona**: "¿Tienes zapatillas Nike?", "Busco Adidas", "Productos Puma"
+- ❌ **NO funciona**: "Muéstrame productos disponibles", "Qué tienes", "Zapatillas baratas"
+- **Razón**: La búsqueda busca palabras literales en nombres de productos (Nike, Adidas, Puma)
+- **Solución**: Siempre incluye una MARCA (Nike, Adidas, Puma, New Balance) en tus búsquedas
+
 ---
 
 ## 🎯 SECCIÓN 1: RAG - Preguntas Frecuentes
@@ -70,9 +76,10 @@ Muéstrame productos Adidas
 
 ### Test 2.3: Búsqueda por Uso
 ```
-Necesito zapatillas para correr en asfalto
+Busco zapatillas Nike para correr
 ```
-**Esperas**: Productos running, características | **Agente**: Retriever/Sales | **Fuente**: PostgreSQL
+**Esperas**: Productos Nike running, características | **Agente**: Retriever/Sales | **Fuente**: PostgreSQL
+**Nota**: ⚠️ Incluye siempre una marca (Nike, Adidas, Puma) en la búsqueda
 
 ---
 
@@ -86,9 +93,10 @@ Necesito zapatillas para correr en asfalto
 
 ### Test 2.5: Listar Todos
 ```
-Muéstrame todos los productos disponibles
+¿Qué marcas de zapatillas tienes?
 ```
-**Esperas**: Lista completa paginada | **Agente**: Retriever | **Fuente**: PostgreSQL
+**Esperas**: Lista de marcas o productos | **Agente**: Retriever/Sales | **Fuente**: PostgreSQL
+**Nota**: ⚠️ Evita palabras genéricas como "disponibles", "todos". Usa marcas: Nike, Adidas, Puma
 
 ---
 
@@ -160,7 +168,18 @@ Busco unas zapatillas baratas
 
 ## 🛒 SECCIÓN 4: Checkout (Transacciones BD)
 
-### Test 4.1: Compra Completa (Happy Path)
+**🚨 BUG CRÍTICO DETECTADO:**
+- ❌ El `user_id` NO se pasa al CheckoutAgent
+- ❌ Las compras NO se completan (loop infinito de transferencias)
+- ❌ NO se crean órdenes en BD
+- ❌ NO se reduce el inventario
+- 📄 Ver [VERIFICAR_COMPRA.md](VERIFICAR_COMPRA.md) para detalles y solución temporal
+
+**Por ahora, SALTA esta sección** o usa `create_test_orders.py` para crear órdenes de prueba.
+
+---
+
+### Test 4.1: Compra Completa (Happy Path) ⚠️ FALLA ACTUALMENTE
 
 **Paso 1:**
 ```

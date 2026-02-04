@@ -54,7 +54,7 @@ class SearchService:
         )
 
     async def semantic_search(
-        self, query: str, session_id: Optional[str] = None
+        self, query: str, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> SearchResult:
         """
         Recibe el texto del usuario y devuelve la respuesta del agente apropiado.
@@ -62,6 +62,7 @@ class SearchService:
         Args:
             query: Consulta del usuario
             session_id: ID de sesión para mantener contexto (opcional)
+            user_id: ID del usuario autenticado (opcional pero necesario para checkout)
 
         Returns:
             SearchResult con la respuesta y metadata
@@ -87,7 +88,7 @@ class SearchService:
                     logger.debug(f"Nueva sesión (memoria): {session_id}")
 
         # Delegar al orquestador
-        response = await self.orchestrator.process_query(query, session_state)
+        response = await self.orchestrator.process_query(query, session_state, user_id=user_id)
 
         # Guardar estado actualizado
         if session_id:

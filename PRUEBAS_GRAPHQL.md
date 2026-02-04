@@ -16,11 +16,53 @@ La documentación que te dieron muestra cómo usar el **endpoint GraphQL** para 
 
 ## 🚀 Cómo Usar
 
-1. **Abre GraphQL Playground**: http://localhost:8000/graphql
-2. **Copia la query base** (Panel izquierdo)
-3. **Copia las variables** (Panel inferior izquierdo "Query Variables")
-4. **Presiona el botón ▶ Play**
-5. **Ve la respuesta** (Panel derecho)
+### ⚠️ IMPORTANTE: Autenticación Requerida
+
+Desde el último update, GraphQL **requiere autenticación JWT**. Debes obtener un token antes de hacer queries.
+
+### 🔐 Paso 0: Obtener Token JWT
+
+**Opción A: Usando cURL**
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "cliente@test.com", "password": "cliente123"}'
+```
+
+**Respuesta**:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+**Opción B: Usando GraphQL Playground (HTTP Headers)**
+
+1. Primero obtén el token con cURL (arriba)
+2. Copia el `access_token`
+3. En GraphQL Playground, panel inferior "HTTP HEADERS", agrega:
+   ```json
+   {
+     "Authorization": "Bearer TU_TOKEN_AQUI"
+   }
+   ```
+
+**Usuarios de prueba**:
+- `cliente@test.com` / `cliente123` (CUSTOMER)
+- `admin@test.com` / `admin123` (ADMIN)
+
+---
+
+### 📝 Pasos para Hacer Queries
+
+1. **Obtén token JWT** (ver paso 0 arriba)
+2. **Abre GraphQL Playground**: http://localhost:8000/graphql
+3. **Agrega header de autenticación** (panel "HTTP HEADERS")
+4. **Copia la query base** (Panel izquierdo)
+5. **Copia las variables** (Panel inferior izquierdo "Query Variables")
+6. **Presiona el botón ▶ Play**
+7. **Ve la respuesta** (Panel derecho)
 
 ---
 
@@ -889,8 +931,28 @@ query ListProducts {
 
 ## 🚀 INICIO RÁPIDO
 
+### 1. Obtén Token de Autenticación
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "cliente@test.com", "password": "cliente123"}'
+```
+
+Copia el `access_token` de la respuesta.
+
+### 2. Configura GraphQL Playground
+
 1. **Abre**: http://localhost:8000/graphql
-2. **Copia en panel izquierdo**:
+
+2. **Agrega header de autenticación** (panel "HTTP HEADERS"):
+   ```json
+   {
+     "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+   }
+   ```
+   *(Reemplaza con tu token real)*
+
+3. **Copia en panel izquierdo**:
    ```graphql
    query Chat($query: String!, $sessionId: String) {
      semanticSearch(query: $query, sessionId: $sessionId) {
@@ -900,15 +962,18 @@ query ListProducts {
      }
    }
    ```
-3. **Copia en "Query Variables"** (panel inferior izquierdo):
+
+4. **Copia en "Query Variables"** (panel inferior izquierdo):
    ```json
    {
      "query": "¿Tienes zapatillas Nike?",
      "sessionId": "test-001"
    }
    ```
-4. **Presiona ▶ Play**
-5. **Ve resultado** en panel derecho
+
+5. **Presiona ▶ Play**
+
+6. **Ve resultado** en panel derecho
 
 ---
 

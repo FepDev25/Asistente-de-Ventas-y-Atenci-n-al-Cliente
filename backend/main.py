@@ -15,6 +15,7 @@ import strawberry
 import uvicorn
 from aioinject.ext.strawberry import AioInjectExtension
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 from strawberry.fastapi import GraphQLRouter
@@ -40,7 +41,21 @@ def create_app() -> FastAPI:
         version="1.0.0",
     )
     
-    # 2. Configurar Rate Limiting
+    # 2. Configurar CORS (IMPORTANTE para el frontend)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",  # React development server
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],  # Permite todos los métodos (GET, POST, PUT, DELETE, etc.)
+        allow_headers=["*"],  # Permite todos los headers
+    )
+    
+    # 3. Configurar Rate Limiting
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
     
@@ -57,17 +72,17 @@ def create_app() -> FastAPI:
             headers={"Retry-After": "60"}
         )
 
-    # 3. Iniciar el Contenedor de Servicios
+    # 4. Iniciar el Contenedor de Servicios
     container = create_business_container()
     logger.info("Contenedor de servicios iniciado correctamente.")
 
-    # 4. Configurar GraphQL
+    # 5. Configurar GraphQL
     schema = strawberry.Schema(
         query=BusinessQuery,
         extensions=[AioInjectExtension(container=container)],
     )
 
-    # 5. Crear routers con rate limiting
+    # 6. Crear routers con rate limiting
     # Configurar contexto para pasar request a los resolvers
     async def get_context(request: Request):
         return {"request": request}
@@ -124,6 +139,7 @@ def create_app() -> FastAPI:
         }
 
     logger.info("✅ Rate limiting configurado")
+    logger.info("✅ CORS configurado para localhost:3000")
     return app
 
 

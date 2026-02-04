@@ -58,7 +58,7 @@ class AgentOrchestrator:
         )
 
     async def process_query(
-        self, query: str, session_state: Optional[AgentState] = None
+        self, query: str, session_state: Optional[AgentState] = None, user_id: Optional[str] = None
     ) -> AgentResponse:
         """
         Procesa un query del usuario coordinando entre agentes con manejo robusto de errores.
@@ -66,6 +66,7 @@ class AgentOrchestrator:
         Args:
             query: Consulta del usuario
             session_state: Estado de sesión existente (opcional)
+            user_id: ID del usuario autenticado (opcional pero necesario para checkout)
 
         Returns:
             AgentResponse del agente seleccionado
@@ -80,6 +81,10 @@ class AgentOrchestrator:
             # Inicializar o actualizar estado
             state = session_state or AgentState(user_query=query)
             state.user_query = query
+            
+            # ✅ BUGFIX: Asignar user_id al estado si se proporcionó
+            if user_id:
+                state.user_id = user_id
 
             # Logger con contexto
             log = self.logger.bind(

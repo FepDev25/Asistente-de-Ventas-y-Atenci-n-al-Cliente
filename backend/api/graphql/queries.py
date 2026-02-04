@@ -139,7 +139,11 @@ class BusinessQuery:
 
         try:
             result = await asyncio.wait_for(
-                search_service.semantic_search(query, session_id=session_id),
+                search_service.semantic_search(
+                    query, 
+                    session_id=session_id,
+                    user_id=user.get('id')  # ✅ BUGFIX: Pasar user_id autenticado
+                ),
                 timeout=30.0
             )
 
