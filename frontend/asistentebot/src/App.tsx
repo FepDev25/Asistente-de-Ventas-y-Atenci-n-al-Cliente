@@ -1,31 +1,74 @@
 // src/App.tsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import ProtectedRoute from './protected/protectedroute';
 import Login from './login/login';
 import Store from './store/store';
 import ChatBot from './chat/chatbot';
-import './App.css';
 import OrderDetail from './orders/orderdetail';
 import Orders from './orders/orders';
+import './App.css';
 
 function AppContent() {
+  const location = useLocation();
+  const { isAuthenticated } = useAuth();
+  
+  // No mostrar ChatBot en la página de login
+  const showChatBot = isAuthenticated && location.pathname !== '/login';
+
   return (
     <>
       <Routes>
-        {/* Login (ahora solo una página más) */}
         <Route path="/login" element={<Login />} />
 
-        {/* Rutas públicas */}
-        <Route path="/tienda" element={<Store />} />
-        <Route path="/store" element={<Store />} />
-        <Route path="/productos" element={<Store />} />
-        <Route path="/ordenes" element={<Orders />} />
-        <Route path="/ordenes/:orderId" element={<OrderDetail />} />
+        <Route 
+          path="/tienda" 
+          element={
+            <ProtectedRoute>
+              <Store />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/store" 
+          element={
+            <ProtectedRoute>
+              <Store />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/productos" 
+          element={
+            <ProtectedRoute>
+              <Store />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/ordenes" 
+          element={
+            <ProtectedRoute>
+              <Orders />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/ordenes/:orderId" 
+          element={
+            <ProtectedRoute>
+              <OrderDetail />
+            </ProtectedRoute>
+          } 
+        />
 
-        {/* Ruta principal */}
-        <Route path="/" element={<Navigate to="/tienda" />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
 
-        {/* 404 */}
         <Route
           path="*"
           element={
@@ -53,17 +96,19 @@ function AppContent() {
         />
       </Routes>
 
-      {/* ChatBot siempre visible */}
-      <ChatBot />
+      {/* ChatBot solo visible cuando está autenticado */}
+      {showChatBot && <ChatBot />}
     </>
   );
 }
 
 function App() {
   return (
-    <Router>
-      <AppContent />
-    </Router>
+    <AuthProvider>
+      <Router>
+        <AppContent />
+      </Router>
+    </AuthProvider>
   );
 }
 

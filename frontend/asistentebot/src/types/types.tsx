@@ -3,8 +3,12 @@
 export interface User {
   id: string;
   email: string;
-  name: string;
-  token?: string;
+  username: string;
+  role: number;
+}
+
+export interface LoginResponse {
+  access_token: string;
 }
 
 export interface Product {
@@ -26,11 +30,18 @@ export interface Message {
 
 export interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>; // ✅ Cambiado de email a identifier
   logout: () => void;
   isLoading: boolean;
+  isAuthenticated: boolean;
 }
 
 export interface CartItem extends Product {
   quantity: number;
+}
+
+export interface LoginCredentials {
+  email?: string;
+  username?: string;
+  password: string;
 }

@@ -18,27 +18,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Verificar si hay un token guardado
-    const token = localStorage.getItem('token');
-    const userData = localStorage.getItem('user');
-    
-    if (token && userData) {
-      setUser(JSON.parse(userData));
-    }
-    setIsLoading(false);
+    // Verificar si hay un token guardado al cargar la app
+    const checkAuth = () => {
+      if (authAPI.isAuthenticated()) {
+        const userData = authAPI.getUserFromToken();
+        if (userData) {
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+        }
+      }
+      setIsLoading(false);
+    };
+
+    checkAuth();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (identifier: string, password: string) => {
     try {
       setIsLoading(true);
-      const userData = await authAPI.login(email, password);
-      setUser(userData);
       
-      if (userData.token) {
-        localStorage.setItem('token', userData.token);
+      // Llamar al API de login con identifier (puede ser email o username)
+      const response = await authAPI.login(identifier, password);
+      
+      // Decodificar el token para obtener la información del usuario
+      const userData = authAPI.getUserFromToken();
+      
+      if (userData) {
+        setUser(userData);
         localStorage.setItem('user', JSON.stringify(userData));
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error en login:', error);
       throw error;
     } finally {
@@ -47,9 +56,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    authAPI.logout();
     setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
   };
 
   const value: AuthContextType = {
@@ -57,6 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     login,
     logout,
     isLoading,
+    isAuthenticated: !!user,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

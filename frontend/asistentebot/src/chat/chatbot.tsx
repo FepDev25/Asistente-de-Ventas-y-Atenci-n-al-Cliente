@@ -1,23 +1,107 @@
-// src/components/ChatBot/ChatBot.tsx
+// chatbot.tsx - CON INTEGRACIÓN DE ÓRDENES
 import React, { useState, useRef, useEffect } from 'react';
-import type { Message } from '../types/types';
-import { chatAPI } from '../services/api';
+import ReactMarkdown from 'react-markdown';
+import { useNavigate } from 'react-router-dom';
+import { chatService, ragService, authService } from '../services/graphqlservices';
+import { useOrderCreation } from '../services/userordercreation';
+import type { SemanticSearchResult, RAGDoc } from '../services/graphqlservices';
 import './chatbot.css';
-import { FiMessageCircle, FiX, FiSend } from 'react-icons/fi';
+import {
+  FiMessageCircle,
+  FiX,
+  FiSend,
+  FiAlertCircle,
+  FiRefreshCw,
+  FiFileText,
+  FiCheck,
+  FiClock,
+  FiShoppingCart,
+  FiPackage,
+  FiTrash2
+} from 'react-icons/fi';
+
+interface Message {
+  id: string;
+  text: string;
+  sender: 'user' | 'bot';
+  timestamp: Date;
+  error?: string | null;
+  ragDocs?: RAGDoc[];
+  status?: 'sending' | 'sent' | 'error';
+  metadata?: {
+    type?: 'order_confirmation' | 'order_created' | 'error' | 'cart_updated';
+    order_id?: string;
+    order_total?: number;
+    products_added?: CartItem[];
+  };
+}
+
+interface QuickAction {
+  id: string;
+  label: string;
+  message: string;
+}
+
+interface CartItem {
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+}
 
 const ChatBot: React.FC = () => {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: '¡Hola! Soy tu asistente de ventas. ¿En qué puedo ayudarte hoy?',
+      text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Agregar productos al carrito\n- Realizar pedidos\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
       sender: 'bot',
-      timestamp: new Date()
+      timestamp: new Date(),
+      status: 'sent'
     }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [showRagDocs, setShowRagDocs] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  
+  // Estados para el carrito y checkout
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [showCart, setShowCart] = useState(false);
+  const [checkoutFlow, setCheckoutFlow] = useState<{
+    active: boolean;
+    step: 'address' | 'confirm' | 'processing' | null;
+    shippingAddress?: string;
+    contactName?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+  }>({
+    active: false,
+    step: null
+  });
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
+
+  // Hook de creación de órdenes
+  const { 
+    isCreating, 
+    error: orderError, 
+    success: orderSuccess, 
+    orderResult, 
+    createOrderFromCart,
+    reset: resetOrderState 
+  } = useOrderCreation();
+
+  // Quick actions para sugerencias rápidas
+  const quickActions: QuickAction[] = [
+    { id: '1', label: '📦 Ver productos', message: 'Muéstrame los productos disponibles' },
+    { id: '2', label: '🎯 Recomendaciones', message: 'Dame recomendaciones personalizadas' },
+    { id: '3', label: '🛒 Ver carrito', message: 'Muéstrame mi carrito' },
+    { id: '4', label: '💳 Finalizar compra', message: 'Quiero finalizar mi compra' }
+  ];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -25,43 +109,350 @@ const ChatBot: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isTyping]);
 
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return;
+  useEffect(() => {
+    if (isOpen) {
+      inputRef.current?.focus();
+      setUnreadCount(0);
+    }
+  }, [isOpen]);
+
+  // Simular mensajes no leídos cuando el chat está cerrado
+  useEffect(() => {
+    if (!isOpen && messages.length > 1) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.sender === 'bot') {
+        setUnreadCount(prev => prev + 1);
+      }
+    }
+  }, [messages, isOpen]);
+
+  // Calcular total del carrito
+  const cartTotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
+
+  const addMessage = (text: string, sender: 'user' | 'bot', metadata?: any) => {
+    const newMessage: Message = {
+      id: `msg-${Date.now()}-${Math.random()}`,
+      text,
+      sender,
+      timestamp: new Date(),
+      status: 'sent',
+      metadata
+    };
+    setMessages(prev => [...prev, newMessage]);
+  };
+
+  const detectCartUpdates = (botResponse: string, rawResponse?: any) => {
+    // Patrones para detectar productos agregados
+    // Ejemplo: "Agregué Laptop Gaming x2 (ID: abc-123, Precio: $1299.99)"
+    const addedPattern = /Agregué (.+?) x(\d+) \(ID: ([a-f0-9-]+)(?:, Precio: \$([0-9.]+))?\)/gi;
+    const matches = Array.from(botResponse.matchAll(addedPattern));
+    
+    if (matches.length > 0) {
+      const newItems: CartItem[] = matches.map(match => ({
+        product_id: match[3],
+        product_name: match[1],
+        quantity: parseInt(match[2]),
+        unit_price: parseFloat(match[4] || '0')
+      }));
+      
+      setCart(prev => {
+        const updated = [...prev];
+        newItems.forEach(newItem => {
+          const existingIndex = updated.findIndex(item => item.product_id === newItem.product_id);
+          if (existingIndex >= 0) {
+            updated[existingIndex].quantity += newItem.quantity;
+          } else {
+            updated.push(newItem);
+          }
+        });
+        return updated;
+      });
+
+      // Mensaje de confirmación
+      setTimeout(() => {
+        addMessage(
+          `✅ **Carrito actualizado**\n\nProductos en el carrito: ${cart.length + newItems.length}\nTotal: $${(cartTotal + newItems.reduce((s, i) => s + (i.unit_price * i.quantity), 0)).toFixed(2)}`,
+          'bot',
+          { type: 'cart_updated', products_added: newItems }
+        );
+      }, 500);
+    }
+
+    // También detectar si el bot menciona productos de forma estructurada
+    // (ajusta esto según cómo tu backend devuelva la info)
+  };
+
+  const detectCheckoutIntent = (userMessage: string): boolean => {
+    const checkoutKeywords = [
+      'comprar', 'ordenar', 'pedido', 'checkout',
+      'finalizar compra', 'confirmar orden', 'quiero comprar',
+      'realizar pedido', 'hacer pedido', 'proceder al pago'
+    ];
+    
+    return checkoutKeywords.some(keyword => 
+      userMessage.toLowerCase().includes(keyword)
+    );
+  };
+
+  const handleCheckoutFlow = async (userMessage: string) => {
+    const message = userMessage.trim();
+
+    // Si no hay checkout activo, iniciarlo
+    if (!checkoutFlow.active) {
+      if (cart.length === 0) {
+        addMessage(
+          '❌ **Carrito vacío**\n\nTu carrito está vacío. Primero agrega algunos productos antes de finalizar la compra.',
+          'bot'
+        );
+        return;
+      }
+
+      setCheckoutFlow({ active: true, step: 'address' });
+      addMessage(
+        '🛒 **Iniciando proceso de compra**\n\n' +
+        `Productos en tu carrito: ${cart.length}\n` +
+        `Total: $${cartTotal.toFixed(2)}\n\n` +
+        '📍 Por favor, indícame tu **dirección de envío completa**:',
+        'bot'
+      );
+      return;
+    }
+
+    // Paso 1: Capturar dirección
+    if (checkoutFlow.step === 'address') {
+      setCheckoutFlow(prev => ({ 
+        ...prev, 
+        step: 'confirm',
+        shippingAddress: message 
+      }));
+
+      addMessage(
+        '✅ **Dirección recibida**\n\n' +
+        `📍 ${message}\n\n` +
+        '📝 Opcionalmente, puedes darme:\n' +
+        '- Tu nombre completo\n' +
+        '- Tu teléfono\n' +
+        '- Tu email\n\n' +
+        'O escribe **"confirmar"** para proceder con el pedido.',
+        'bot'
+      );
+      return;
+    }
+
+    // Paso 2: Capturar datos adicionales o confirmar
+    if (checkoutFlow.step === 'confirm') {
+      if (message.toLowerCase() === 'confirmar') {
+        // Procesar la orden
+        await processOrder();
+      } else {
+        // Intentar extraer nombre, teléfono, email del mensaje
+        const emailMatch = message.match(/[\w.-]+@[\w.-]+\.\w+/);
+        const phoneMatch = message.match(/[\d\s\-()]{7,}/);
+        
+        setCheckoutFlow(prev => ({
+          ...prev,
+          contactEmail: emailMatch ? emailMatch[0] : prev.contactEmail,
+          contactPhone: phoneMatch ? phoneMatch[0] : prev.contactPhone,
+          contactName: !emailMatch && !phoneMatch ? message : prev.contactName
+        }));
+
+        addMessage(
+          '✅ **Información actualizada**\n\n' +
+          'Escribe **"confirmar"** para finalizar el pedido o continúa agregando información.',
+          'bot'
+        );
+      }
+      return;
+    }
+  };
+
+  const processOrder = async () => {
+    if (!checkoutFlow.shippingAddress) {
+      addMessage('❌ Error: No se capturó la dirección de envío', 'bot');
+      return;
+    }
+
+    setCheckoutFlow(prev => ({ ...prev, step: 'processing' }));
+    addMessage('⏳ **Procesando tu orden...**', 'bot');
+
+    const sessionId = chatService.getSessionId();
+    
+    const result = await createOrderFromCart(
+      cart,
+      {
+        address: checkoutFlow.shippingAddress,
+        contact_name: checkoutFlow.contactName,
+        contact_phone: checkoutFlow.contactPhone,
+        contact_email: checkoutFlow.contactEmail
+      },
+      sessionId
+    );
+
+    // Resetear checkout flow
+    setCheckoutFlow({ active: false, step: null });
+
+    if (result.success && result.order_id) {
+      addMessage(
+        `✅ **¡Orden creada exitosamente!**\n\n` +
+        `📋 **Número de orden:** #${result.order_id.substring(0, 8)}\n` +
+        `💰 **Total:** $${result.order_total?.toFixed(2)}\n` +
+        `📦 **Productos:** ${result.item_count}\n\n` +
+        `📍 **Envío a:** ${checkoutFlow.shippingAddress}\n\n` +
+        `Puedes ver los detalles de tu orden haciendo clic en el botón de abajo.`,
+        'bot',
+        {
+          type: 'order_created',
+          order_id: result.order_id,
+          order_total: result.order_total
+        }
+      );
+
+      // Limpiar carrito
+      setCart([]);
+      setShowCart(false);
+
+      // Ofrecer ver la orden
+      setTimeout(() => {
+        if (window.confirm('¿Quieres ver los detalles de tu orden ahora?')) {
+          navigate(`/ordenes/${result.order_id}`);
+        }
+      }, 1000);
+    } else {
+      addMessage(
+        `❌ **Error al crear la orden**\n\n` +
+        `${result.message}\n\n` +
+        `**Código de error:** ${result.error_code}\n\n` +
+        `Por favor, intenta de nuevo o contacta a soporte.`,
+        'bot',
+        { type: 'error' }
+      );
+    }
+  };
+
+  const handleSendMessage = async (messageText?: string) => {
+    const text = (messageText || inputMessage).trim();
+    if (!text) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: inputMessage,
+      text,
       sender: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
+      status: 'sending'
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsTyping(true);
 
-    try {
-      // Intenta enviar al backend
-      const response = await chatAPI.sendMessage(inputMessage).catch(() => {
-        // Si falla, usa respuesta mock
-        return getMockResponse(inputMessage);
-      });
+    // Actualizar estado a "sent"
+    setTimeout(() => {
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === userMessage.id ? { ...msg, status: 'sent' } : msg
+        )
+      );
+    }, 300);
 
-      const botMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: typeof response === 'string' ? response : response.text,
-        sender: 'bot',
-        timestamp: new Date()
-      };
+    // Detectar intención de checkout
+    const isCheckoutIntent = detectCheckoutIntent(text);
+    
+    // Si hay checkout activo o se detectó intención de compra
+    if (checkoutFlow.active || (isCheckoutIntent && cart.length > 0)) {
+      setIsTyping(false);
+      await handleCheckoutFlow(text);
+      return;
+    }
+
+    try {
+      // Llamar al servicio de chat
+      const response: SemanticSearchResult = await chatService.sendMessage(text);
+
+      // Obtener documentos RAG si está habilitado
+      let ragDocs: RAGDoc[] = [];
+      if (showRagDocs) {
+        try {
+          ragDocs = await ragService.searchDocs(text, 3);
+        } catch (err) {
+          console.warn('No se pudieron obtener docs RAG:', err);
+        }
+      }
+
+      // Simular tiempo de "escritura" más realista
+      const typingDelay = Math.min(response.answer.length * 10, 2000);
 
       setTimeout(() => {
+        const botMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: response.answer || 'Lo siento, no obtuve respuesta.',
+          sender: 'bot',
+          timestamp: new Date(),
+          error: response.error,
+          ragDocs: ragDocs.length > 0 ? ragDocs : undefined,
+          status: 'sent'
+        };
+
         setMessages(prev => [...prev, botMessage]);
         setIsTyping(false);
+
+        // Detectar actualizaciones del carrito en la respuesta
+        detectCartUpdates(response.answer, response);
+      }, typingDelay);
+
+    } catch (err) {
+      console.error('Error enviando mensaje:', err);
+
+      setTimeout(() => {
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: '❌ **Error de conexión**\n\nLo siento, hubo un problema conectando con el servidor. Por favor, intenta de nuevo.',
+          sender: 'bot',
+          timestamp: new Date(),
+          error: 'connection_error',
+          status: 'error'
+        };
+
+        setMessages(prev => [...prev, errorMessage]);
+        setIsTyping(false);
       }, 500);
-    } catch (error) {
-      setIsTyping(false);
-      console.error('Error enviando mensaje:', error);
+    }
+  };
+
+  const handleQuickAction = (action: QuickAction) => {
+    if (action.label.includes('carrito')) {
+      setShowCart(true);
+      if (cart.length > 0) {
+        addMessage(
+          `🛒 **Tu carrito**\n\n` +
+          cart.map(item => `• ${item.product_name} x${item.quantity} - $${(item.unit_price * item.quantity).toFixed(2)}`).join('\n') +
+          `\n\n**Total:** $${cartTotal.toFixed(2)}`,
+          'bot'
+        );
+      } else {
+        addMessage('Tu carrito está vacío. ¡Agrega algunos productos!', 'bot');
+      }
+    } else if (action.label.includes('Finalizar compra')) {
+      if (cart.length > 0) {
+        handleCheckoutFlow('quiero finalizar mi compra');
+      } else {
+        addMessage('❌ Tu carrito está vacío. Agrega productos primero.', 'bot');
+      }
+    } else {
+      handleSendMessage(action.message);
+    }
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart(prev => prev.filter(item => item.product_id !== productId));
+    addMessage(`✅ Producto removido del carrito`, 'bot');
+  };
+
+  const clearCart = () => {
+    if (window.confirm('¿Seguro que quieres vaciar el carrito?')) {
+      setCart([]);
+      addMessage(`🗑️ Carrito vaciado`, 'bot');
     }
   };
 
@@ -73,53 +464,307 @@ const ChatBot: React.FC = () => {
   };
 
   const toggleChat = () => {
-    setIsOpen(!isOpen);
+    setIsOpen(o => !o);
+  };
+
+  const handleNewConversation = () => {
+    chatService.resetSession();
+    setMessages([
+      {
+        id: Date.now().toString(),
+        text: '🔄 **Nueva conversación iniciada**\n\n¡Hola de nuevo! Estoy listo para ayudarte. ¿En qué puedo asistirte?',
+        sender: 'bot',
+        timestamp: new Date(),
+        status: 'sent'
+      }
+    ]);
+    setCheckoutFlow({ active: false, step: null });
+    resetOrderState();
+  };
+
+  const getErrorIcon = (error: string | null | undefined) => {
+    if (!error) return null;
+
+    const errorMessages: Record<string, string> = {
+      'timeout': 'La respuesta tardó mucho tiempo',
+      'service_unavailable': 'Servicio temporalmente no disponible',
+      'internal_error': 'Error interno del servidor',
+      'connection_error': 'Error de conexión',
+      'graphql_error': 'Error en la consulta'
+    };
+
+    return (
+      <div className="message-error" title={errorMessages[error] || 'Error'}>
+        <FiAlertCircle size={14} />
+        <span>{errorMessages[error] || 'Error'}</span>
+      </div>
+    );
+  };
+
+  const getMessageStatusIcon = (status?: 'sending' | 'sent' | 'error') => {
+    switch (status) {
+      case 'sending':
+        return <FiClock size={12} style={{ opacity: 0.5 }} />;
+      case 'sent':
+        return <FiCheck size={12} style={{ opacity: 0.6 }} />;
+      case 'error':
+        return <FiAlertCircle size={12} style={{ color: 'var(--error)' }} />;
+      default:
+        return null;
+    }
   };
 
   return (
     <>
-      {/* Botón flotante */}
-      <button 
+      {/* Toggle Button */}
+      <button
         className={`chat-toggle-btn ${isOpen ? 'open' : ''}`}
         onClick={toggleChat}
+        aria-label={isOpen ? 'Cerrar chat' : 'Abrir chat'}
       >
-        {isOpen ? <FiX size={28} /> : <FiMessageCircle size={28} />}
+        {isOpen ? (
+          <FiX size={32} />
+        ) : (
+          <>
+            <FiMessageCircle size={32} />
+            {unreadCount > 0 && (
+              <span className="chat-badge">{unreadCount}</span>
+            )}
+            {cart.length > 0 && (
+              <span className="cart-badge-toggle">{cart.length}</span>
+            )}
+          </>
+        )}
       </button>
 
-      {/* Ventana de chat */}
+      {/* Chat Window */}
       <div className={`chat-window ${isOpen ? 'open' : ''}`}>
+        {/* Header */}
         <div className="chat-header">
           <div className="chat-header-info">
-            <div className="bot-avatar">🤖</div>
+            <div className={`bot-avatar ${isTyping ? 'typing' : ''}`}>
+              🤖
+            </div>
             <div>
-              <h3>Asistente de Ventas</h3>
-              <p className="status">En línea</p>
+              <h3>Alex - Asistente de Ventas</h3>
+              <p className="status">
+                <span className="status-dot"></span>
+                {isTyping ? 'Escribiendo...' : checkoutFlow.active ? 'Procesando compra...' : 'En línea'}
+              </p>
             </div>
           </div>
-          <button className="close-chat-btn" onClick={toggleChat}>
-            <FiX size={24} />
-          </button>
+
+          <div className="chat-header-actions">
+            {cart.length > 0 && (
+              <button
+                className={`icon-button cart-button ${showCart ? 'active' : ''}`}
+                onClick={() => setShowCart(!showCart)}
+                title="Ver carrito"
+              >
+                <FiShoppingCart size={18} />
+                <span className="cart-count">{cart.length}</span>
+              </button>
+            )}
+            <button
+              className={`icon-button ${showRagDocs ? 'active' : ''}`}
+              onClick={() => setShowRagDocs(!showRagDocs)}
+              title={showRagDocs ? 'Ocultar docs RAG' : 'Mostrar docs RAG'}
+              aria-label="Toggle RAG docs"
+            >
+              <FiFileText size={18} />
+            </button>
+            <button
+              className="icon-button"
+              onClick={handleNewConversation}
+              title="Nueva conversación"
+              aria-label="Nueva conversación"
+            >
+              <FiRefreshCw size={18} />
+            </button>
+            <button
+              className="close-chat-btn"
+              onClick={toggleChat}
+              aria-label="Cerrar chat"
+            >
+              <FiX size={20} />
+            </button>
+          </div>
         </div>
 
-        <div className="chat-messages">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`message ${message.sender === 'user' ? 'user-message' : 'bot-message'}`}
-            >
-              <div className="message-content">
-                <p>{message.text}</p>
-                <span className="message-time">
-                  {message.timestamp.toLocaleTimeString('es-ES', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </span>
+        {/* Cart Sidebar */}
+        {showCart && cart.length > 0 && (
+          <div className="cart-sidebar">
+            <div className="cart-sidebar-header">
+              <h4>🛒 Tu Carrito</h4>
+              <button onClick={() => setShowCart(false)} className="close-cart">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="cart-items">
+              {cart.map(item => (
+                <div key={item.product_id} className="cart-item">
+                  <div className="cart-item-info">
+                    <div className="cart-item-name">{item.product_name}</div>
+                    <div className="cart-item-details">
+                      Cantidad: {item.quantity} × ${item.unit_price.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="cart-item-actions">
+                    <div className="cart-item-price">
+                      ${(item.unit_price * item.quantity).toFixed(2)}
+                    </div>
+                    <button
+                      onClick={() => removeFromCart(item.product_id)}
+                      className="remove-item"
+                      title="Eliminar"
+                    >
+                      <FiTrash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="cart-footer">
+              <div className="cart-total">
+                <strong>Total:</strong>
+                <strong>${cartTotal.toFixed(2)}</strong>
               </div>
+              <button
+                onClick={() => handleQuickAction({ id: 'checkout', label: '💳 Finalizar compra', message: 'Quiero finalizar mi compra' })}
+                className="checkout-btn"
+                disabled={isCreating}
+              >
+                <FiPackage size={16} />
+                {isCreating ? 'Procesando...' : 'Finalizar Compra'}
+              </button>
+              <button onClick={clearCart} className="clear-cart-btn">
+                Vaciar Carrito
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div
+          className="chat-messages"
+          ref={chatMessagesRef}
+          role="log"
+          aria-live="polite"
+        >
+          {messages.map((message, index) => (
+            <div key={message.id}>
+              {/* Message Bubble */}
+              <div
+                className={`message ${message.sender === 'user' ? 'user-message' : 'bot-message'}`}
+                style={{ animationDelay: `${index * 0.05}s` }}
+              >
+                <div className="message-content">
+                  {message.sender === 'bot' ? (
+                    <ReactMarkdown
+                      components={{
+                        p: ({ node, ...props }) => <p {...props} />,
+                        strong: ({ node, ...props }) => <strong {...props} />,
+                        em: ({ node, ...props }) => <em {...props} />,
+                        code({ node, className, children, ...props }: any) {
+                          const match = /language-(\w+)/.exec(className || '');
+                          return match ? (
+                            <pre className="code-block">
+                              <code className={className} {...props}>{children}</code>
+                            </pre>
+                          ) : (
+                            <code className="code-inline" {...props}>{children}</code>
+                          );
+                        },
+                        ul: ({ node, ...props }) => <ul {...props} />,
+                        ol: ({ node, ...props }) => <ol {...props} />,
+                        li: ({ node, ...props }) => <li {...props} />,
+                        h1: ({ node, ...props }) => <h1 {...props} />,
+                        h2: ({ node, ...props }) => <h2 {...props} />,
+                        h3: ({ node, ...props }) => <h3 {...props} />,
+                        a: ({ node, ...props }) => (
+                          <a {...props} target="_blank" rel="noopener noreferrer" />
+                        ),
+                        blockquote: ({ node, ...props }) => <blockquote {...props} />,
+                        hr: ({ node, ...props }) => <hr {...props} />
+                      }}
+                    >
+                      {message.text}
+                    </ReactMarkdown>
+                  ) : (
+                    <p>{message.text}</p>
+                  )}
+
+                  {/* Botón especial para ver orden creada */}
+                                    {/* Botón especial para ver orden creada */}
+                  {message.metadata?.type === 'order_created' && message.metadata?.order_id && (
+                    <button
+                      className="view-order-button"
+                      onClick={() => navigate(`/ordenes/${message.metadata?.order_id}`)}
+                    >
+                      <FiPackage size={16} />
+                      Ver mi orden
+                    </button>
+                  )}
+
+                  <div className="message-footer">
+                    <span className="message-time">
+                      {message.timestamp.toLocaleTimeString('es-ES', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </span>
+                    {message.sender === 'user' && getMessageStatusIcon(message.status)}
+                    {getErrorIcon(message.error)}
+                  </div>
+                </div>
+              </div>
+
+              {/* RAG Documents Display */}
+              {message.ragDocs && message.ragDocs.length > 0 && (
+                <div className="rag-docs-container">
+                  <div className="rag-docs-header">
+                    <FiFileText size={14} />
+                    <span>Documentos consultados ({message.ragDocs.length})</span>
+                  </div>
+                  {message.ragDocs.map((doc, idx) => (
+                    <div key={idx} className="rag-doc">
+                      <div className="rag-doc-header">
+                        <span className="rag-doc-category">{doc.category}</span>
+                        <span className="rag-doc-score">
+                          {(doc.relevance_score * 100).toFixed(0)}% relevante
+                        </span>
+                      </div>
+                      <p className="rag-doc-content">
+                        {doc.content.slice(0, 200)}...
+                      </p>
+                      <span className="rag-doc-source">
+                        Fuente: {doc.source}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Quick Actions - Solo mostrar después del primer mensaje del bot */}
+              {index === 0 && message.sender === 'bot' && (
+                <div className="quick-actions">
+                  {quickActions.map(action => (
+                    <button
+                      key={action.id}
+                      className="quick-action"
+                      onClick={() => handleQuickAction(action)}
+                      disabled={isTyping}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
-          
-          {isTyping && (
+
+          {/* Typing Indicator */}
+          {(isTyping || isCreating) && (
             <div className="message bot-message">
               <div className="message-content typing">
                 <div className="typing-indicator">
@@ -127,68 +772,58 @@ const ChatBot: React.FC = () => {
                   <span></span>
                   <span></span>
                 </div>
+                {isCreating && <p style={{ fontSize: '0.85em', marginTop: '0.5rem' }}>Creando tu orden...</p>}
               </div>
             </div>
           )}
-          
+
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Input Area */}
         <div className="chat-input-container">
           <input
+            ref={inputRef}
             type="text"
-            placeholder="Escribe tu mensaje..."
+            placeholder={
+              checkoutFlow.step === 'address' 
+                ? "Escribe tu dirección de envío..." 
+                : checkoutFlow.step === 'confirm'
+                ? 'Escribe "confirmar" o agrega más información...'
+                : "Escribe tu mensaje..."
+            }
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             onKeyPress={handleKeyPress}
             className="chat-input"
+            disabled={isTyping || isCreating}
+            aria-label="Mensaje"
+            autoComplete="off"
+            maxLength={500}
           />
           <button
-            onClick={handleSendMessage}
-            disabled={!inputMessage.trim()}
+            onClick={() => handleSendMessage()}
+            disabled={!inputMessage.trim() || isTyping || isCreating}
             className="send-button"
+            aria-label="Enviar mensaje"
           >
-            <FiSend size={20} />
+            <FiSend size={22} />
           </button>
+        </div>
+
+        {/* Footer */}
+        <div className="chat-footer">
+          <small>Session: {chatService.getSessionId().slice(-8)}</small>
+          {showRagDocs && (
+            <small className="rag-mode-indicator"> • Modo RAG activo</small>
+          )}
+          {cart.length > 0 && (
+            <small className="cart-indicator"> • {cart.length} en carrito</small>
+          )}
         </div>
       </div>
     </>
   );
-};
-
-// Respuestas mock para desarrollo
-const getMockResponse = (message: string): string => {
-  const lowerMessage = message.toLowerCase();
-  
-  if (lowerMessage.includes('precio') || lowerMessage.includes('cuesta')) {
-    return 'Los precios de nuestros productos varían. ¿Hay algún producto específico del que quieras saber el precio?';
-  }
-  
-  if (lowerMessage.includes('envío') || lowerMessage.includes('entrega')) {
-    return 'Realizamos envíos a todo el país. El tiempo de entrega es de 3-5 días hábiles. ¿Necesitas información sobre alguna dirección en particular?';
-  }
-  
-  if (lowerMessage.includes('pago') || lowerMessage.includes('tarjeta')) {
-    return 'Aceptamos tarjetas de crédito, débito, transferencias bancarias y pagos en efectivo. ¿Cuál prefieres?';
-  }
-  
-  if (lowerMessage.includes('laptop') || lowerMessage.includes('computadora')) {
-    return 'Tenemos varias opciones de laptops disponibles. Te recomiendo revisar nuestra sección de Electrónica donde encontrarás las especificaciones completas.';
-  }
-  
-  if (lowerMessage.includes('stock') || lowerMessage.includes('disponible')) {
-    return 'Puedes ver la disponibilidad de cada producto directamente en su tarjeta. Si hay pocas unidades, aparecerá una etiqueta indicándolo.';
-  }
-  
-  if (lowerMessage.includes('gracias')) {
-    return '¡De nada! Estoy aquí para ayudarte. ¿Hay algo más en lo que pueda asistirte?';
-  }
-  
-  if (lowerMessage.includes('hola') || lowerMessage.includes('buenos')) {
-    return '¡Hola! ¿En qué puedo ayudarte hoy? Puedo responder preguntas sobre productos, precios, envíos y más.';
-  }
-  
-  return 'Entiendo tu consulta. ¿Podrías ser más específico? Puedo ayudarte con información sobre productos, precios, envíos, métodos de pago y más.';
 };
 
 export default ChatBot;
