@@ -168,18 +168,17 @@ Busco unas zapatillas baratas
 
 ## 🛒 SECCIÓN 4: Checkout (Transacciones BD)
 
-**🚨 BUG CRÍTICO DETECTADO:**
-- ❌ El `user_id` NO se pasa al CheckoutAgent
-- ❌ Las compras NO se completan (loop infinito de transferencias)
-- ❌ NO se crean órdenes en BD
-- ❌ NO se reduce el inventario
-- 📄 Ver [VERIFICAR_COMPRA.md](VERIFICAR_COMPRA.md) para detalles y solución temporal
+**✅ BUGFIX APLICADO:**
+- ✅ El `user_id` ahora se pasa correctamente al CheckoutAgent
+- ✅ Mejorada extracción de producto del query actual (no usa búsquedas antiguas)
+- ✅ Las compras deberían funcionar correctamente
+- 📄 Ver [VERIFICAR_COMPRA.md](VERIFICAR_COMPRA.md) para comandos de verificación
 
-**Por ahora, SALTA esta sección** o usa `create_test_orders.py` para crear órdenes de prueba.
+**⚠️ IMPORTANTE:** Después de hacer una compra, usa una **sesión nueva** (F5 en el frontend) para evitar conflictos con productos previos en la sesión.
 
 ---
 
-### Test 4.1: Compra Completa (Happy Path) ⚠️ FALLA ACTUALMENTE
+### Test 4.1: Compra Completa (Happy Path)
 
 **Paso 1:**
 ```
