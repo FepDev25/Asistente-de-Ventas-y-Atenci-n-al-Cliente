@@ -9,6 +9,11 @@ import strawberry
 from aioinject import Inject
 from aioinject.ext.strawberry import inject
 from loguru import logger
+from strawberry.types import Info
+from fastapi import HTTPException, status
+from jwt.exceptions import InvalidTokenError
+
+from backend.config.security import securityJWT
 
 from backend.api.graphql.types import ProductStockType, SemanticSearchResponse
 from backend.services.product_service import ProductService
@@ -22,15 +27,18 @@ class BusinessQuery:
     @inject
     async def list_products(
         self,
+        info: Info,
         product_service: Annotated[ProductService, Inject],
         limit: int = 20
     ) -> list[ProductStockType]:
         """
         Catálogo clásico: Devuelve lista de zapatos con manejo de errores.
+        Requiere header Authorization: Bearer <token>
 
         Query: { listProducts(limit: 10) { productName unitCost } }
 
         Error Handling:
+        - Requiere JWT válido → HTTP 401 si no
         - Timeout de BD → Lista vacía con log
         - BD caída → Lista vacía con log
         - Error general → Lista vacía
@@ -38,7 +46,36 @@ class BusinessQuery:
         Returns:
             Lista de productos (vacía en caso de error)
         """
-        logger.info(f"GraphQL: Listando {limit} productos")
+        logger.info(f"GraphQL: Listando {limit} productos (requiere JWT)")
+
+       
+        request = info.context.get("request")
+        if request is None:
+            logger.error("No se encontró el request en el contexto GraphQL")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No se pudo validar las credenciales",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            logger.warning("Authorization header faltante o mal formado")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authorization token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token = auth_header.replace("Bearer ", "")
+        try:
+            user = securityJWT.decode_and_validate_token(token)
+            logger.info(user)
+        except InvalidTokenError:
+            logger.warning("Token JWT inválido")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
         try:
             # Usamos servicio limpio de ProductService
@@ -76,6 +113,7 @@ class BusinessQuery:
         self,
         query: str,
         search_service: Annotated[SearchService, Inject],
+        info:Info,
         session_id: str | None = None
     ) -> SemanticSearchResponse:
         """
@@ -95,8 +133,36 @@ class BusinessQuery:
         Returns:
             SemanticSearchResponse con answer (siempre) y error (opcional)
         """
+        
+        request = info.context.get("request")
+        if request is None:
+            logger.error("No se encontró el request en el contexto GraphQL")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No se pudo validar las credenciales",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            logger.warning("Authorization header faltante o mal formado")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authorization token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token = auth_header.replace("Bearer ", "")
+        user = None
+        try:
+            user = securityJWT.decode_and_validate_token(token)
+            
+        except InvalidTokenError:
+            logger.warning("Token JWT inválido")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         logger.info(f"GraphQL: Chat con Alex -> '{query}' (session: {session_id})")
-
         try:
             # Llamamos a SearchService con timeout
             result = await asyncio.wait_for(

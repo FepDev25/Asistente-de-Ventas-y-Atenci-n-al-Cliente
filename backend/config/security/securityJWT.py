@@ -1,6 +1,7 @@
 from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
 import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
 from backend.config.security.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -32,3 +33,23 @@ def create_access_token(data: dict, user: dict) -> str:
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM
     )
+def decode_and_validate_token(token: str) -> dict:
+    """
+    Decodifica y valida un JWT.
+    - Verifica firma
+    - Verifica expiración
+    - Retorna el payload si es válido
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        return payload
+
+    except ExpiredSignatureError:
+        raise ValueError("El token ha expirado")
+
+    except InvalidTokenError:
+        raise ValueError("Token inválido")

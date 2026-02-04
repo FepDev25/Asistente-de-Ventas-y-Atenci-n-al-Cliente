@@ -89,11 +89,7 @@ class Order(Base):
         String(20),
         nullable=False,
         server_default=text("'DRAFT'"),
-        comment=f"Estado del pedido: {', '.join([
-            OrderStatus.DRAFT, OrderStatus.CONFIRMED, OrderStatus.PAID,
-            OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED,
-            OrderStatus.CANCELLED, OrderStatus.REFUNDED
-        ])}"
+        comment=f"Estado del pedido: {', '.join([OrderStatus.DRAFT, OrderStatus.CONFIRMED, OrderStatus.PAID,OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED,OrderStatus.CANCELLED, OrderStatus.REFUNDED])}"
     )
     
     # =========================================================================
