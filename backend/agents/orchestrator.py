@@ -58,7 +58,7 @@ class AgentOrchestrator:
         )
 
     async def process_query(
-        self, query: str, session_state: Optional[AgentState] = None
+        self, query: str, session_state: Optional[AgentState] = None, user_id: Optional[str] = None
     ) -> AgentResponse:
         """
         Procesa un query del usuario coordinando entre agentes con manejo robusto de errores.
@@ -66,6 +66,7 @@ class AgentOrchestrator:
         Args:
             query: Consulta del usuario
             session_state: Estado de sesión existente (opcional)
+            user_id: ID del usuario autenticado (opcional pero necesario para checkout)
 
         Returns:
             AgentResponse del agente seleccionado
@@ -80,6 +81,10 @@ class AgentOrchestrator:
             # Inicializar o actualizar estado
             state = session_state or AgentState(user_query=query)
             state.user_query = query
+            
+            # ✅ BUGFIX: Asignar user_id al estado si se proporcionó
+            if user_id:
+                state.user_id = user_id
 
             # Logger con contexto
             log = self.logger.bind(
@@ -443,7 +448,7 @@ Responde SOLO con un JSON válido en este formato:
                 "search": "retriever",
                 "persuasion": "sales",
                 "checkout": "checkout",
-                "info": "sales",
+                "info": "retriever",  # Retriever usa RAG para FAQs
             }
 
             self.logger.info(
@@ -774,7 +779,7 @@ Determina el estilo predominante basándote en el tono, vocabulario y estructura
             "search": "retriever",
             "persuasion": "sales",
             "checkout": "checkout",
-            "info": "sales",  # Sales agent maneja info con RAG
+            "info": "retriever",  # Retriever usa RAG para FAQs (políticas, horarios, etc.)
         }
 
         confidence = min(max_score / 3.0, 1.0)  # Normalizar a 0-1
