@@ -68,7 +68,11 @@ def create_app() -> FastAPI:
     )
 
     # 5. Crear routers con rate limiting
-    graphql_app = GraphQLRouter(schema)
+    # Configurar contexto para pasar request a los resolvers
+    async def get_context(request: Request):
+        return {"request": request}
+    
+    graphql_app = GraphQLRouter(schema, context_getter=get_context)
     app.include_router(graphql_app, prefix="/graphql")
     app.include_router(auth_router)
 
