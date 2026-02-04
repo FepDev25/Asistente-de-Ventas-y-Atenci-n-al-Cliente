@@ -156,15 +156,14 @@ async def init_database():
             # Hashes pre-calculados para evitar problemas con bcrypt
             # admin123 -> $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/IiK
             # cliente123 -> $2b$12$qPVT1fJNVzdOQQK5XxQzQOAaD8jhz/I9J7lYkQqxzDZmOpm5KGh2q
-            from backend.config.security.securityJWT import pwd_context
+            from backend.config.security.securityJWT import hash_password
             for usr in USUARIOS_INICIALES:
                 try:
-                    # Intentar usar bcrypt normalmente
-                    password = usr["password"][:72]
-                    password_hash = pwd_context.hash(password)
+                    # Usar hash_password de securityJWT (bcrypt directo)
+                    password_hash = hash_password(usr["password"])
                 except Exception as e:
                     # Fallback: usar hash pre-calculado
-                    print(f"   ⚠️  Usando hash pre-calculado para {usr['username']}")
+                    print(f"   ⚠️  Usando hash pre-calculado para {usr['username']}: {e}")
                     if usr['username'] == 'admin':
                         password_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/IiK"
                     else:

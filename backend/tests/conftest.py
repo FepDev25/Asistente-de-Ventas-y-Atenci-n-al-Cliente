@@ -5,6 +5,7 @@ Define fixtures compartidos entre todos los tests.
 import asyncio
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -57,6 +58,13 @@ from backend.database.models import (
     User,
 )
 from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
+
+
+# Ignorar tests de agentes-consumir en la recolección
+collect_ignore = [
+    "../../agentes-consumir",
+    "../../agentes-consumir/LM_orchester_product_recognition",
+]
 
 
 # ============================================================================
@@ -311,6 +319,48 @@ async def order_service(db_session: AsyncSession):
     
     session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
     return OrderService(session_factory)
+
+
+# ============================================================================
+# FIXTURES DE AUTENTICACIÓN
+# ============================================================================
+
+@pytest_asyncio.fixture
+async def admin_token(test_admin: User) -> str:
+    """Genera un token JWT para el usuario admin."""
+    from backend.config.security.securityJWT import create_access_token
+    
+    user_data = {"id": str(test_admin.id), "username": test_admin.username}
+    token = create_access_token(data=user_data, user=user_data)
+    return token
+
+
+@pytest_asyncio.fixture
+async def customer_token(test_user: User) -> str:
+    """Genera un token JWT para el usuario cliente."""
+    from backend.config.security.securityJWT import create_access_token
+    
+    user_data = {"id": str(test_user.id), "username": test_user.username}
+    token = create_access_token(data=user_data, user=user_data)
+    return token
+
+
+@pytest_asyncio.fixture
+async def customer_user(clean_db: AsyncSession) -> User:
+    """Crea un usuario cliente de prueba."""
+    user = User(
+        id=uuid.uuid4(),
+        username="customer",
+        email="customer@example.com",
+        full_name="Customer User",
+        password_hash="hashed_password",
+        role=2,  # Cliente
+        is_active=True,
+    )
+    clean_db.add(user)
+    await clean_db.commit()
+    await clean_db.refresh(user)
+    return user
 
 
 # ============================================================================

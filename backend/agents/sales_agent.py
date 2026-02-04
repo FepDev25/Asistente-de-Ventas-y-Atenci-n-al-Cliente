@@ -1,5 +1,6 @@
 """
 Agente Vendedor - Persuasión y cierre de ventas con LLM.
+Incluye integración con Agente 2 para reconocimiento de imágenes.
 """
 from typing import List
 import asyncio
@@ -10,11 +11,14 @@ from backend.agents.base import BaseAgent
 from backend.domain.agent_schemas import AgentState, AgentResponse
 from backend.llm.provider import LLMProvider
 from backend.services.rag_service import RAGService
+from backend.tools.agent2_recognition_client import ProductRecognitionClient
 
 
 class SalesAgent(BaseAgent):
     """
     Agente Vendedor "Alex" - Especializado en persuasión y cierre.
+    
+    También maneja reconocimiento de productos por imagen usando el Agente 2.
 
     Responsabilidades:
     - Persuasión sobre objeciones de precio
@@ -23,6 +27,7 @@ class SalesAgent(BaseAgent):
     - Crear urgencia (stock limitado)
     - Cierre de venta (transferir a Checkout)
     - Adaptar tono según estilo del usuario
+    - Reconocimiento de productos por imagen (Agente 2)
     """
 
     def __init__(self, llm_provider: LLMProvider, rag_service: RAGService):
@@ -37,8 +42,13 @@ class SalesAgent(BaseAgent):
         - Preguntas sobre productos
         - Solicitudes de recomendaciones
         - Dudas generales
+        - Imágenes de productos (reconocimiento visual)
         - Cualquier interacción que requiera persuasión
         """
+        # Si hay una imagen subida, el SalesAgent debe manejarla
+        if state.uploaded_image is not None:
+            return True
+        
         if state.detected_intent == "persuasion":
             return True
 
@@ -61,23 +71,192 @@ class SalesAgent(BaseAgent):
         query_lower = state.user_query.lower()
         return any(keyword in query_lower for keyword in persuasion_keywords)
 
+    async def _process_image_query(self, state: AgentState) -> AgentResponse:
+        """
+        Procesa una consulta que incluye una imagen usando el Agente 2.
+        
+        Envía la imagen al servicio de reconocimiento SIFT y actualiza
+        el estado con el producto detectado.
+        
+        Args:
+            state: Estado del agente con uploaded_image
+            
+        Returns:
+            AgentResponse con el resultado del reconocimiento
+        """
+        logger.info("SalesAgent procesando imagen con Agente 2")
+        
+        if not state.uploaded_image:
+            return self._create_response(
+                message="No pude procesar la imagen. ¿Puedes intentar de nuevo?",
+                state=state
+            )
+        
+        client = ProductRecognitionClient()
+        try:
+            result = await client.recognize_product(
+                image_bytes=state.uploaded_image,
+                filename=state.uploaded_image_filename or "image.jpg"
+            )
+            
+            if result["success"] and result["product_name"]:
+                # Producto detectado exitosamente
+                product_name = result["product_name"]
+                confidence = result["confidence"]
+                matches = result["matches"]
+                
+                # Actualizar estado
+                state.detected_product_from_image = product_name
+                state.image_recognition_confidence = confidence
+                
+                # Agregar al historial
+                state = self._add_to_history(
+                    state, 
+                    "user", 
+                    f"[Imagen: {product_name}]"
+                )
+                
+                # Construir mensaje según confianza
+                style = state.user_style or "neutral"
+                
+                if confidence >= 0.8:
+                    # Alta confianza
+                    messages = {
+                        "cuencano": (
+                            f"¡Veo que tienes unos **{product_name}**! "
+                            f"Son de lujo ve. ¿Quieres que te busque detalles o los agregamos al carrito?"
+                        ),
+                        "juvenil": (
+                            f"Che, reconocí esos **{product_name}** al toque. "
+                            f"Son re buenos. ¿Los querés ver o los agregamos?"
+                        ),
+                        "formal": (
+                            f"He identificado los **{product_name}** en su imagen. "
+                            f"¿Desea que le muestre los detalles o procedemos con la compra?"
+                        ),
+                        "neutral": (
+                            f"Reconocí los **{product_name}** en tu imagen. "
+                            f"¿Quieres ver los detalles o agregarlos al carrito?"
+                        ),
+                    }
+                elif confidence >= 0.5:
+                    # Confianza media
+                    messages = {
+                        "cuencano": (
+                            f"Creo que son unos **{product_name}** (no estoy 100% seguro). "
+                            f"¿Es correcto ve?"
+                        ),
+                        "juvenil": (
+                            f"Parecen ser **{product_name}**, pero no estoy tan seguro. "
+                            f"¿Es eso che?"
+                        ),
+                        "formal": (
+                            f"Parecen ser **{product_name}**, aunque no estoy completamente seguro. "
+                            f"¿Es correcto?"
+                        ),
+                        "neutral": (
+                            f"Parecen ser **{product_name}** (confianza media). "
+                            f"¿Es correcto?"
+                        ),
+                    }
+                else:
+                    # Baja confianza
+                    messages = {
+                        "cuencano": (
+                            f"No estoy muy seguro, pero podrían ser **{product_name}**. "
+                            f"¿Me puedes confirmar ve?"
+                        ),
+                        "juvenil": (
+                            f"No estoy seguro bro, ¿son **{product_name}**? "
+                            f"¿Me confirmás?"
+                        ),
+                        "formal": (
+                            f"No estoy completamente seguro, pero podrían ser **{product_name}**. "
+                            f"¿Podría confirmarlo?"
+                        ),
+                        "neutral": (
+                            f"No estoy muy seguro, pero podrían ser **{product_name}**. "
+                            f"¿Puedes confirmarlo?"
+                        ),
+                    }
+                
+                message = messages.get(style, messages["neutral"])
+                
+                # Actualizar query para búsqueda semántica
+                state.user_query = f"Quiero información sobre {product_name}"
+                
+                return self._create_response(
+                    message=message,
+                    state=state
+                )
+                
+            else:
+                # No se pudo reconocer el producto
+                logger.warning(f"Agent 2 no reconoció el producto: {result.get('error')}")
+                
+                state = self._add_to_history(
+                    state, 
+                    "user", 
+                    "[Imagen: no reconocida]"
+                )
+                
+                style = state.user_style or "neutral"
+                messages = {
+                    "cuencano": (
+                        "No pude identificar ese producto en la imagen ve. "
+                        "¿Puedes describirme qué es? ¿Marca, modelo, color?"
+                    ),
+                    "juvenil": (
+                        "No reconocí ese producto en la foto che. "
+                        "¿Me describís qué es? ¿Marca y modelo?"
+                    ),
+                    "formal": (
+                        "No he podido identificar el producto en la imagen. "
+                        "¿Podría describirlo? Marca, modelo, color..."
+                    ),
+                    "neutral": (
+                        "No pude identificar el producto en la imagen. "
+                        "¿Puedes describirlo? Marca, modelo, color..."
+                    ),
+                }
+                
+                return self._create_response(
+                    message=messages.get(style, messages["neutral"]),
+                    state=state
+                )
+                
+        except Exception as e:
+            logger.error(f"Error procesando imagen: {e}", exc_info=True)
+            return self._create_response(
+                message="Tuve un problema procesando la imagen. ¿Puedes describir el producto?",
+                state=state
+            )
+        finally:
+            await client.close()
+    
     async def process(self, state: AgentState) -> AgentResponse:
         """
         Procesa interacciones de venta con LLM con manejo robusto de errores.
 
         Flujo:
-        1. Detecta estilo de usuario (si no está detectado)
-        2. Construye system prompt personalizado
-        3. Consulta RAG si es necesario para info adicional
-        4. Genera respuesta persuasiva con LLM (con timeout y retry)
-        5. Detecta si debe transferir a Checkout
+        1. Si hay imagen, procesar con Agente 2 primero
+        2. Detecta estilo de usuario (si no está detectado)
+        3. Construye system prompt personalizado
+        4. Consulta RAG si es necesario para info adicional
+        5. Genera respuesta persuasiva con LLM (con timeout y retry)
+        6. Detecta si debe transferir a Checkout
 
         Error Handling:
         - Timeout del LLM (>10s) → Mensaje de disculpa
         - Error de conexión → Fallback gracioso
         - Respuesta vacía → Mensaje genérico
+        - Agente 2 no disponible → Mensaje de error amigable
         """
         logger.info(f"SalesAgent procesando: {state.user_query}")
+        
+        # Si hay una imagen subida, procesarla primero con Agente 2
+        if state.uploaded_image is not None:
+            return await self._process_image_query(state)
 
         try:
             # Construir system prompt adaptado al estilo del usuario

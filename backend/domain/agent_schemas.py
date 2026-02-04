@@ -39,6 +39,12 @@ class AgentState(BaseModel):
     # Usuario autenticado (si aplica)
     user_id: Optional[str] = None  # UUID como string
     
+    # Imagen subida por el usuario (para reconocimiento por Agente 2)
+    uploaded_image: Optional[bytes] = None  # Bytes de la imagen
+    uploaded_image_filename: Optional[str] = None  # Nombre del archivo
+    detected_product_from_image: Optional[str] = None  # Producto detectado por Agente 2
+    image_recognition_confidence: Optional[float] = None  # Confianza del reconocimiento
+    
     # Metadata
     current_agent: Optional[str] = None
     session_id: Optional[str] = None
