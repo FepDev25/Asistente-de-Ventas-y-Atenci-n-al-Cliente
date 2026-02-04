@@ -443,7 +443,7 @@ Responde SOLO con un JSON válido en este formato:
                 "search": "retriever",
                 "persuasion": "sales",
                 "checkout": "checkout",
-                "info": "sales",
+                "info": "retriever",  # Retriever usa RAG para FAQs
             }
 
             self.logger.info(
@@ -774,7 +774,7 @@ Determina el estilo predominante basándote en el tono, vocabulario y estructura
             "search": "retriever",
             "persuasion": "sales",
             "checkout": "checkout",
-            "info": "sales",  # Sales agent maneja info con RAG
+            "info": "retriever",  # Retriever usa RAG para FAQs (políticas, horarios, etc.)
         }
 
         confidence = min(max_score / 3.0, 1.0)  # Normalizar a 0-1

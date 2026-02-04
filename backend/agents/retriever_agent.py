@@ -58,21 +58,30 @@ class RetrieverAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AgentResponse:
         """
-        Procesa búsquedas de productos con manejo robusto de errores.
+        Procesa búsquedas usando RAG (FAQs) o SQL (productos).
 
         Flujo:
-        1. Extrae términos de búsqueda del query
-        2. Busca en la BD usando ProductService (con error handling)
-        3. Filtra resultados por disponibilidad
-        4. Retorna candidatos al orquestador
+        1. Detecta si es pregunta FAQ (políticas, horarios, etc.)
+        2. Si es FAQ → Busca en RAG (ChromaDB con embeddings)
+        3. Si no es FAQ → Busca productos en SQL
+        4. Retorna resultados
 
         Error Handling:
-        - Error de BD → Mensaje amigable
-        - Timeout de BD → Mensaje de disculpa
-        - Sin términos de búsqueda → Mensaje de ayuda
+        - Error de RAG/BD → Mensaje amigable
+        - Sin resultados → Transfer a SalesAgent
         """
         logger.info(f"RetrieverAgent procesando: {state.user_query}")
 
+        # PASO 1: Detectar si es pregunta FAQ (info general)
+        is_faq_query = self._is_faq_query(state.user_query)
+        
+        if is_faq_query:
+            logger.info("🔍 Detectada pregunta FAQ → Buscando en RAG")
+            return await self._handle_faq_query(state)
+        
+        # PASO 2: Si no es FAQ, buscar productos en SQL
+        logger.info("🛍️ Detectada búsqueda de productos → Buscando en SQL")
+        
         try:
             # Extraer términos de búsqueda (palabras significativas)
             search_terms = self._extract_search_terms(state.user_query)
@@ -214,6 +223,147 @@ class RetrieverAgent(BaseAgent):
             products_found=len(available_products),
             partial_errors=len(search_errors),
         )
+
+    def _is_faq_query(self, query: str) -> bool:
+        """
+        Detecta si la pregunta es sobre información general (FAQs).
+        
+        Retorna True para preguntas sobre:
+        - Políticas (devoluciones, garantía)
+        - Horarios y ubicación
+        - Formas de pago y envío
+        - Información de la tienda
+        """
+        query_lower = query.lower()
+        
+        faq_keywords = [
+            # Políticas
+            "política", "devolución", "devolver", "garantía", "cambio",
+            # Horarios y ubicación
+            "horario", "hora", "abre", "cierra", "ubicación", "dirección",
+            "dónde", "donde está", "sucursal", "local",
+            # Pagos y envíos  
+            "pago", "pagar", "tarjeta", "efectivo", "transferencia",
+            "envío", "envio", "delivery", "entrega", "domicilio",
+            # Info general
+            "cómo funciona", "qué hacen", "quiénes son", "quién",
+            "contacto", "teléfono", "whatsapp", "email",
+        ]
+        
+        return any(keyword in query_lower for keyword in faq_keywords)
+    
+    async def _handle_faq_query(self, state: AgentState) -> AgentResponse:
+        """
+        Maneja preguntas FAQ usando RAG (búsqueda semántica en ChromaDB).
+        
+        Args:
+            state: Estado de la conversación
+            
+        Returns:
+            AgentResponse con respuesta de RAG o mensaje de error
+        """
+        try:
+            # Buscar en RAG (ChromaDB con embeddings)
+            rag_results = await self.rag_service.search(
+                query=state.user_query,
+                k=3  # Top 3 resultados más relevantes
+            )
+            
+            if not rag_results or len(rag_results) == 0:
+                logger.warning("RAG no encontró resultados relevantes")
+                message = self._format_no_faq_results(state)
+                return self._create_response(
+                    message=message,
+                    state=state,
+                    should_transfer=True,
+                    transfer_to="sales",
+                )
+            
+            # Obtener la respuesta más relevante
+            best_result = rag_results[0]
+            
+            logger.info(
+                f"✅ RAG encontró respuesta: {best_result.category} "
+                f"(score: {best_result.relevance_score}, source: {best_result.source})"
+            )
+            
+            # Formatear respuesta según estilo del usuario
+            message = self._format_faq_response(best_result, state)
+            
+            # Actualizar estado
+            state.detected_intent = "info"
+            state.conversation_slots["last_faq_category"] = best_result.category
+            
+            return self._create_response(
+                message=message,
+                state=state,
+                should_transfer=False,  # No transferir, RAG dio respuesta completa
+                metadata={
+                    "rag_source": best_result.source,
+                    "rag_category": best_result.category,
+                    "rag_score": best_result.relevance_score,
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Error en búsqueda RAG: {str(e)}", exc_info=True)
+            message = self._get_rag_error_message(state)
+            return self._create_response(
+                message=message,
+                state=state,
+                should_transfer=True,
+                transfer_to="sales",
+                error="rag_error",
+            )
+    
+    def _format_faq_response(self, rag_result, state: AgentState) -> str:
+        """Formatea la respuesta de RAG según el estilo del usuario."""
+        # Extraer la respuesta del contenido RAG
+        content = rag_result.content
+        
+        # Si viene del FAQ, extraer solo la respuesta (después de "Respuesta:")
+        if "Respuesta:" in content:
+            response_text = content.split("Respuesta:", 1)[1].strip()
+        else:
+            response_text = content
+        
+        style = state.user_style or "neutral"
+        
+        # Adaptar tono según estilo
+        if style == "cuencano":
+            return f"¡Claro ve! {response_text}"
+        elif style == "juvenil":
+            return f"¡Dale! {response_text}"
+        elif style == "formal":
+            return f"Con gusto le informo: {response_text}"
+        else:
+            return response_text
+    
+    def _format_no_faq_results(self, state: AgentState) -> str:
+        """Mensaje cuando RAG no encuentra respuestas."""
+        style = state.user_style or "neutral"
+        
+        messages = {
+            "cuencano": "Ayayay, no encontré info sobre eso ve. ¿Te ayudo con productos mejor?",
+            "juvenil": "Che, no tengo esa info. ¿Querés que te muestre productos?",
+            "formal": "Disculpe, no encuentro esa información. ¿Le ayudo con productos?",
+            "neutral": "No encontré esa información. ¿Te ayudo a buscar productos?",
+        }
+        
+        return messages.get(style, messages["neutral"])
+    
+    def _get_rag_error_message(self, state: AgentState) -> str:
+        """Mensaje cuando falla la búsqueda en RAG."""
+        style = state.user_style or "neutral"
+        
+        messages = {
+            "cuencano": "Ayayay, tuve un problemita buscando esa info ve. ¿Intentamos de nuevo?",
+            "juvenil": "Che, falló la búsqueda. ¿Probamos de nuevo?",
+            "formal": "Disculpe, hubo un error al buscar esa información. ¿Podríamos reintentar?",
+            "neutral": "Hubo un error al buscar. ¿Intentamos de nuevo?",
+        }
+        
+        return messages.get(style, messages["neutral"])
 
     def _get_no_terms_message(self, state: AgentState) -> str:
         """Mensaje cuando no se pueden extraer términos de búsqueda."""
