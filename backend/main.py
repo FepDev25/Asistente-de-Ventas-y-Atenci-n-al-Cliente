@@ -26,8 +26,9 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from backend.config import get_business_settings
 from backend.config.rate_limit_config import limiter, RateLimitConfig
-from backend.api.endPoints.auth.auth import router as auth_router
+from backend.api.endPoints.router import api_router
 from backend.api.graphql.queries import BusinessQuery
+from backend.api.graphql.mutations import BusinessMutation
 from backend.container import create_business_container
 
 
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     # 5. Configurar GraphQL
     schema = strawberry.Schema(
         query=BusinessQuery,
+        mutation=BusinessMutation,
         extensions=[AioInjectExtension(container=container)],
     )
 
@@ -89,7 +91,7 @@ def create_app() -> FastAPI:
     
     graphql_app = GraphQLRouter(schema, context_getter=get_context)
     app.include_router(graphql_app, prefix="/graphql")
-    app.include_router(auth_router)
+    app.include_router(api_router)
 
     @app.get("/")
     @limiter.limit(RateLimitConfig.ROOT_ENDPOINT)

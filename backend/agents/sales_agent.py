@@ -1,61 +1,78 @@
 """
-Agente Vendedor - Persuasión y cierre de ventas con LLM.
+Agente Vendedor "Alex" - Especializado en persuasión y recomendaciones.
+
+NUEVO FLUJO: El Agente 2 envía un guión con códigos de barras.
+Este agente recibe los productos, compara, analiza descuentos/promociones,
+y persuade cuál es la mejor opción para el usuario.
 """
-from typing import List
+from typing import List, Optional
 import asyncio
 from loguru import logger
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from backend.agents.base import BaseAgent
 from backend.domain.agent_schemas import AgentState, AgentResponse
+from backend.domain.guion_schemas import GuionEntrada
 from backend.llm.provider import LLMProvider
 from backend.services.rag_service import RAGService
+from backend.services.product_service import ProductService
+from backend.services.product_comparison_service import ProductComparisonService
 
 
 class SalesAgent(BaseAgent):
     """
-    Agente Vendedor "Alex" - Especializado en persuasión y cierre.
-
-    Responsabilidades:
-    - Persuasión sobre objeciones de precio
-    - Cross-selling y upselling
-    - Manejo de dudas del cliente
-    - Crear urgencia (stock limitado)
-    - Cierre de venta (transferir a Checkout)
-    - Adaptar tono según estilo del usuario
+    Agente Vendedor "Alex" - Especializado en persuasión y recomendaciones experto.
+    
+    FLUJO ACTUALIZADO:
+    1. Recibe guion del Agente 2 (con códigos de barras)
+    2. Busca productos en BD por código de barras
+    3. Compara productos analizando:
+       - Precios y descuentos
+       - Promociones activas
+       - Stock disponible
+       - Preferencias del usuario
+    4. Genera recomendación persuasiva personalizada
+    5. Cierra venta transfiriendo a CheckoutAgent
+    
+    Ya NO hay restricción de 40-50 palabras.
+    El agente puede dar respuestas completas y detalladas.
     """
 
-    def __init__(self, llm_provider: LLMProvider, rag_service: RAGService):
+    def __init__(
+        self, 
+        llm_provider: LLMProvider, 
+        rag_service: RAGService,
+        product_service: ProductService
+    ):
         super().__init__(agent_name="sales")
         self.llm_provider = llm_provider
         self.rag_service = rag_service
+        self.product_service = product_service
+        self.comparison_service = ProductComparisonService()
 
     def can_handle(self, state: AgentState) -> bool:
         """
         El SalesAgent maneja:
+        - Procesamiento de guiones del Agente 2
+        - Comparación de productos
+        - Recomendaciones
         - Objeciones de precio
-        - Preguntas sobre productos
-        - Solicitudes de recomendaciones
-        - Dudas generales
-        - Cualquier interacción que requiera persuasión
+        - Dudas sobre cuál elegir
         """
-        if state.detected_intent == "persuasion":
+        # Si hay un guion en el estado, este agente lo procesa
+        if hasattr(state, 'guion_agente2') and state.guion_agente2:
+            return True
+        
+        if state.detected_intent in ["persuasion", "info", "recomendacion"]:
             return True
 
-        # Palabras clave que indican necesidad de persuasión
+        # Palabras clave de comparación/recomendación
         persuasion_keywords = [
-            "caro",
-            "precio",
-            "barato",
-            "descuento",
-            "oferta",
-            "mejor",
-            "recomienda",
-            "duda",
-            "no sé",
-            "diferencia",
-            "vale la pena",
-            "por qué",
+            "cual es mejor", "cual me recomiendas", "que diferencia",
+            "cual elegir", "no se cual", "comparar", "versus",
+            "por que este", "vale la pena", "mejor opcion",
+            "descuento", "oferta", "promocion", "mas barato",
+            "ahorro", "rebaja"
         ]
 
         query_lower = state.user_query.lower()
@@ -63,538 +80,379 @@ class SalesAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AgentResponse:
         """
-        Procesa interacciones de venta con LLM con manejo robusto de errores.
-
-        Flujo:
-        1. Detecta estilo de usuario (si no está detectado)
-        2. Construye system prompt personalizado
-        3. Consulta RAG si es necesario para info adicional
-        4. Genera respuesta persuasiva con LLM (con timeout y retry)
-        5. Detecta si debe transferir a Checkout
-
-        Error Handling:
-        - Timeout del LLM (>10s) → Mensaje de disculpa
-        - Error de conexión → Fallback gracioso
-        - Respuesta vacía → Mensaje genérico
+        Procesa interacciones de venta con el nuevo flujo de guiones.
+        
+        Flujo principal:
+        1. Verificar si hay guion del Agente 2
+        2. Si hay guion: buscar productos por barcode → comparar → recomendar
+        3. Si no hay guion: usar RAG para preguntas generales
         """
         logger.info(f"SalesAgent procesando: {state.user_query}")
-
+        
         try:
-            # Construir system prompt adaptado al estilo del usuario
-            system_prompt = self._build_system_prompt(state)
-
-            # Construir contexto de la conversación
-            messages = self._build_conversation_messages(state, system_prompt)
-
-            # Llamar al LLM con timeout y retry
-            assistant_message = await self._call_llm_with_retry(messages)
-
-            # Validar respuesta
-            if not assistant_message or len(assistant_message.strip()) == 0:
-                logger.warning("LLM retornó respuesta vacía")
-                assistant_message = self._get_fallback_message(state)
-
-        except asyncio.TimeoutError:
-            logger.error(
-                "LLM timeout después de múltiples intentos",
-                exc_info=True
-            )
-            assistant_message = self._get_timeout_message(state)
-
+            # CASO 1: Procesar guion del Agente 2
+            if hasattr(state, 'guion_agente2') and state.guion_agente2:
+                return await self._procesar_guion(state)
+            
+            # CASO 2: Pregunta general (sin guion)
+            return await self._procesar_pregunta_general(state)
+                
         except Exception as e:
-            logger.error(
-                f"Error inesperado en SalesAgent: {str(e)}",
-                exc_info=True
+            logger.error(f"Error inesperado en SalesAgent: {str(e)}", exc_info=True)
+            return self._create_response(
+                message=self._get_error_message(state),
+                state=state,
+                should_transfer=False
             )
-            assistant_message = self._get_error_message(state, e)
 
-        # Extraer y actualizar slots de conversación
-        self._update_conversation_slots(state)
-
-        # Actualizar historial (siempre, incluso con errores)
-        state = self._add_to_history(state, "user", state.user_query)
-        state = self._add_to_history(state, "assistant", assistant_message)
-
-        # Detectar si hay intención de compra (solo si no es mensaje de error)
-        should_transfer = False
-        transfer_to = None
-
-        if not self._is_error_message(assistant_message):
-            try:
-                should_transfer, transfer_to = self._detect_checkout_intent(
-                    state.user_query, assistant_message
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error detectando intención de checkout: {str(e)}"
-                )
-                # No transferir si hay error
-
+    async def _procesar_guion(self, state: AgentState) -> AgentResponse:
+        """
+        Procesa un guion completo del Agente 2.
+        
+        Este es el flujo principal del nuevo diseño:
+        1. Extraer guion del estado
+        2. Buscar productos por códigos de barras
+        3. Comparar y generar recomendación
+        4. Crear respuesta persuasiva personalizada
+        """
+        guion = state.guion_agente2
+        
         logger.info(
-            f"SalesAgent completado - Transfer: {should_transfer} to {transfer_to}"
+            f"Procesando guion del Agente 2: {len(guion.productos)} productos, "
+            f"session={guion.session_id}"
         )
-
+        
+        # 1. Extraer códigos de barras del guion
+        barcodes = guion.get_codigos_barras()
+        if not barcodes:
+            return self._create_response(
+                message="No se encontraron códigos de producto en el guión. ¿Puedes intentar de nuevo?",
+                state=state,
+                error="no_barcodes_in_guion"
+            )
+        
+        # 2. Buscar productos en la base de datos
+        products = await self.product_service.get_products_by_barcodes(barcodes)
+        
+        if not products:
+            return self._create_response(
+                message=(
+                    f"No encontré los productos con códigos: {', '.join(barcodes)}. "
+                    f"¿Puedes verificar los códigos o intentar con otros productos?"
+                ),
+                state=state,
+                error="products_not_found"
+            )
+        
+        # 3. Comparar productos y generar recomendación
+        try:
+            recommendation = await self.comparison_service.compare_and_recommend(
+                products, guion
+            )
+        except ValueError as e:
+            logger.warning(f"Error en comparación: {e}")
+            # Si falla la comparación, mostrar productos encontrados
+            mensaje_simple = await self._format_productos_simple(products, guion)
+            return self._create_response(
+                message=mensaje_simple,
+                state=state,
+                should_transfer=False
+            )
+        
+        # 4. Guardar productos en el estado para checkout posterior
+        state.search_results = [
+            {
+                "id": str(p.id),
+                "name": p.product_name,
+                "price": float(p.final_price),
+                "original_price": float(p.unit_cost) if p.unit_cost else None,
+                "stock": p.quantity_available,
+                "barcode": p.barcode,
+                "is_on_sale": p.is_on_sale,
+                "promotion": p.promotion_description
+            }
+            for p in products
+        ]
+        
+        # 5. Generar mensaje persuasivo con estilo del usuario (usando LLM)
+        mensaje = await self._generar_mensaje_recomendacion(
+            recommendation, 
+            guion.preferencias,
+            guion
+        )
+        
+        # 6. Agregar al historial
+        state = self._add_to_history(state, "user", guion.texto_original_usuario)
+        state = self._add_to_history(state, "assistant", mensaje)
+        
+        # 7. Detectar si hay intención de compra
+        should_transfer = self._detectar_intencion_compra(
+            guion.contexto.intencion_principal
+        )
+        
+        logger.info(
+            f"Recomendación generada: mejor_opcion={recommendation.best_option_id}, "
+            f"score={recommendation.products[0].recommendation_score if recommendation.products else 0}"
+        )
+        
         return self._create_response(
-            message=assistant_message,
+            message=mensaje,
             state=state,
             should_transfer=should_transfer,
-            transfer_to=transfer_to,
+            transfer_to="checkout" if should_transfer else None,
+            metadata={
+                "guion_procesado": True,
+                "productos_encontrados": len(products),
+                "mejor_opcion": str(recommendation.best_option_id),
+                "intencion": guion.contexto.intencion_principal
+            }
         )
 
-    async def _call_llm_with_retry(
-        self, messages: List, max_retries: int = 2, timeout: float = 10.0
+    async def _procesar_pregunta_general(self, state: AgentState) -> AgentResponse:
+        """
+        Procesa preguntas generales cuando no hay guion.
+        Usa RAG para FAQs y el LLM para responder.
+        """
+        # Construir system prompt
+        system_prompt = self._build_system_prompt_simple(state)
+        
+        # Consultar RAG si es necesario
+        contexto_rag = ""
+        if any(palabra in state.user_query.lower() for palabra in 
+               ["política", "devolución", "garantía", "envío", "hora"]):
+            try:
+                rag_results = await self.rag_service.get_context_for_query(
+                    state.user_query, max_results=2
+                )
+                contexto_rag = rag_results
+            except Exception as e:
+                logger.warning(f"RAG no disponible: {e}")
+        
+        # Construir mensajes
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"{contexto_rag}\n\nPregunta: {state.user_query}")
+        ]
+        
+        # Llamar al LLM
+        try:
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=10.0
+            )
+            mensaje = response.content.strip()
+        except asyncio.TimeoutError:
+            mensaje = self._get_timeout_message(state)
+        
+        # Actualizar historial
+        state = self._add_to_history(state, "user", state.user_query)
+        state = self._add_to_history(state, "assistant", mensaje)
+        
+        return self._create_response(
+            message=mensaje,
+            state=state,
+            should_transfer=False
+        )
+
+    async def _generar_mensaje_recomendacion(
+        self,
+        recommendation: 'ProductRecommendationResult',
+        preferencias: 'PreferenciasUsuario',
+        guion: GuionEntrada
     ) -> str:
         """
-        Llama al LLM con retry logic y timeout.
-
-        Args:
-            messages: Mensajes para el LLM
-            max_retries: Número máximo de reintentos
-            timeout: Timeout en segundos por intento
-
-        Returns:
-            Respuesta del LLM
-
-        Raises:
-            asyncio.TimeoutError: Si todos los intentos fallan por timeout
-            Exception: Si hay otro error después de reintentos
+        Genera un mensaje persuasivo usando el LLM para respuestas naturales.
+        
+        El LLM recibe el contexto completo y genera una respuesta conversacional,
+        sin formato robótico de bullets ni markdown excesivo.
         """
-        last_error = None
-
-        for attempt in range(max_retries + 1):
-            try:
-                if attempt > 0:
-                    logger.info(f"Reintento {attempt}/{max_retries} de llamada LLM")
-                    # Esperar antes de reintentar (exponential backoff)
-                    await asyncio.sleep(2 ** attempt)
-
-                # Llamar LLM con timeout
-                response = await asyncio.wait_for(
-                    self.llm_provider.model.ainvoke(messages),
-                    timeout=timeout
-                )
-
-                # Extraer contenido
-                content = response.content
-
-                # Validar que no esté vacío
-                if isinstance(content, str) and content.strip():
-                    return content.strip()
-                else:
-                    logger.warning(f"LLM retornó contenido vacío en intento {attempt + 1}")
-                    last_error = ValueError("Empty response from LLM")
-                    continue
-
-            except asyncio.TimeoutError as e:
-                logger.warning(
-                    f"LLM timeout en intento {attempt + 1}/{max_retries + 1} "
-                    f"(timeout: {timeout}s)"
-                )
-                last_error = e
-                continue
-
-            except Exception as e:
-                logger.warning(
-                    f"Error en llamada LLM (intento {attempt + 1}/{max_retries + 1}): {str(e)}"
-                )
-                last_error = e
-                continue
-
-        # Si llegamos aquí, todos los intentos fallaron
-        if isinstance(last_error, asyncio.TimeoutError):
-            raise asyncio.TimeoutError(
-                f"LLM no respondió después de {max_retries + 1} intentos"
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        producto = recommendation.products[0]
+        estilo = preferencias.estilo_comunicacion
+        
+        # Construir prompt para el LLM
+        system_prompt = self._build_prompt_estilo(estilo)
+        
+        # Contexto del producto
+        contexto_producto = self._build_contexto_producto(producto, recommendation, guion)
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=contexto_producto)
+        ]
+        
+        try:
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=10.0
             )
-        else:
-            raise last_error or Exception("LLM call failed after retries")
+            return response.content.strip()
+        except asyncio.TimeoutError:
+            # Fallback simple si el LLM no responde
+            return self._fallback_mensaje(producto, guion)
+    
+    def _build_prompt_estilo(self, estilo: str) -> str:
+        """Build el system prompt según el estilo de comunicación."""
+        
+        base = """Eres Alex, un vendedor experto de una tienda de calzado deportivo.
 
-    def _get_fallback_message(self, state: AgentState) -> str:
-        """Mensaje de fallback cuando LLM falla pero no es timeout."""
-        style = state.user_style or "neutral"
-
-        messages = {
-            "cuencano": (
-                "Ayayay, disculpa ve, tuve un problemita técnico. "
-                "¿Puedes repetir tu pregunta?"
-            ),
-            "juvenil": (
-                "Uh, perdón bro, tuve un error técnico. "
-                "¿Podés repetir?"
-            ),
-            "formal": (
-                "Disculpe, he tenido un inconveniente técnico. "
-                "¿Podría reformular su consulta?"
-            ),
-            "neutral": (
-                "Lo siento, tuve un problema técnico. "
-                "¿Puedes intentar de nuevo?"
-            ),
+REGLAS IMPORTANTES:
+1. Responde en UN SOLO párrafo fluido, como hablarías con un cliente en persona
+2. NO uses bullets, listas, ni formato markdown con ** o ##
+3. NO uses emojis excesivos (máximo 1 opcional)
+4. Sé natural, conversacional y persuasivo
+5. Menciona el precio y descuento de forma orgánica, no como un listado
+6. Cierra con una pregunta natural para continuar la conversación
+7. Máximo 4-5 oraciones
+"""
+        
+        estilos = {
+            "cuencano": base + """
+Estilo: Cuencano/Ecuatoriano cercano
+- Usa expresiones como "mirá", "fíjate", "ve", "nomás"
+- Sé cálido y familiar, como un amigo recomendando
+- Ejemplo: "Mirá, estos Nike Air Max están en oferta a $104, te ahorrás $26. Son perfectos para caminar por la ciudad. ¿Te los preparo?"
+""",
+            "juvenil": base + """
+Estilo: Juvenil y casual
+- Sé directo, energético pero natural
+- Usa lenguaje coloquial actual
+- Ejemplo: "Che, encontré estos Air Max que están ideales. Están $104 con descuento, te ahorrás $26. Son cómodos para el día a día. ¿Te copan?"
+""",
+            "formal": base + """
+Estilo: Profesional y educado
+- Sé cortés pero cercano
+- Usa lenguaje claro y directo
+- Ejemplo: "Le recomiendo estos Nike Air Max que tenemos en oferta a $104, con un ahorro de $26. Son ideales para uso casual. ¿Le gustaría verlos?"
+""",
+            "neutral": base + """
+Estilo: Amigable y natural
+- Sé conversacional y directo
+- Evita formalismos excesivos
+- Ejemplo: "Encontré estos Nike Air Max perfectos para vos. Están en oferta a $104, te ahorrás $26. Son súper cómodos para caminar. ¿Te interesan?"
+"""
         }
+        
+        return estilos.get(estilo, estilos["neutral"])
+    
+    def _build_contexto_producto(
+        self, 
+        producto: 'ProductComparisonSchema',
+        rec: 'ProductRecommendationResult',
+        guion: GuionEntrada
+    ) -> str:
+        """Construye el contexto del producto para el LLM."""
+        
+        # Info básica del producto
+        info = f"Producto recomendado: {producto.product_name}\n"
+        info += f"Precio actual: ${producto.final_price:.2f}\n"
+        
+        if producto.is_on_sale:
+            info += f"Precio original: ${producto.unit_cost:.2f}\n"
+            info += f"Descuento: {producto.discount_percent}% (Ahorro: ${producto.savings_amount:.2f})\n"
+            if producto.promotion_description:
+                info += f"Promoción: {producto.promotion_description}\n"
+        
+        info += f"Stock disponible: {producto.quantity_available} unidades\n"
+        info += f"Razón de recomendación: {producto.reason}\n"
+        
+        # Preferencias del usuario
+        if guion.preferencias.uso_previsto:
+            info += f"Uso que le dará: {guion.preferencias.uso_previsto}\n"
+        if guion.preferencias.presupuesto_maximo:
+            info += f"Presupuesto: hasta ${guion.preferencias.presupuesto_maximo}\n"
+        
+        # Productos alternativos si existen
+        if len(rec.products) > 1:
+            info += "\nAlternativas consideradas:\n"
+            for p in rec.products[1:3]:
+                info += f"- {p.product_name}: ${p.final_price:.2f}\n"
+        
+        info += "\nGenera una respuesta persuasiva y natural recomendando este producto."
+        
+        return info
+    
+    def _fallback_mensaje(
+        self, 
+        producto: 'ProductComparisonSchema',
+        guion: GuionEntrada
+    ) -> str:
+        """Mensaje simple si el LLM no responde."""
+        
+        msg = f"Te recomiendo el {producto.product_name}"
+        
+        if producto.is_on_sale:
+            msg += f" que está en oferta a ${producto.final_price:.2f} (te ahorrás ${producto.savings_amount:.2f})."
+        else:
+            msg += f" a ${producto.final_price:.2f}."
+        
+        msg += " " + producto.reason.split(";")[0] if ";" in producto.reason else producto.reason
+        msg += " ¿Te interesa?"
+        
+        return msg
 
-        return messages.get(style, messages["neutral"])
+    async def _format_productos_simple(
+        self, 
+        products: List['ProductStock'], 
+        guion: GuionEntrada
+    ) -> str:
+        """Formato simple cuando no se puede hacer comparación completa - usando LLM."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        # Preparar lista de productos
+        productos_info = []
+        for p in products:
+            info = f"- {p.product_name}: ${p.final_price:.2f}"
+            if p.is_on_sale:
+                info += f" (en oferta, ahorrás ${float(p.unit_cost) - float(p.final_price):.2f})"
+            productos_info.append(info)
+        
+        prompt = f"""Menciona estos productos de forma natural y conversacional, sin usar bullets ni listas:
+
+{chr(10).join(productos_info)}
+
+El cliente busca: {guion.preferencias.uso_previsto or "calzado deportivo"}
+
+Responde en 2-3 oraciones mencionando los productos disponibles y pregunta cuál le interesa."""
+        
+        messages = [
+            SystemMessage(content="Eres un vendedor amigable. Responde de forma natural, sin formato de lista."),
+            HumanMessage(content=prompt)
+        ]
+        
+        try:
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=8.0
+            )
+            return response.content.strip()
+        except:
+            # Fallback simple
+            nombres = ", ".join([p.product_name for p in products[:3]])
+            return f"Tengo disponibles {nombres}. ¿Cuál te interesa?"
+    
+    def _detectar_intencion_compra(self, intencion: str) -> bool:
+        """Detecta si la intención es compra directa."""
+        return intencion in ["compra_directa", "comprar", "confirmar"]
+
+    def _build_system_prompt_simple(self, state: AgentState) -> str:
+        """System prompt simplificado para preguntas generales."""
+        return """Eres Alex, asistente de ventas de una tienda de calzado deportivo.
+
+Tu trabajo es ayudar a los clientes con preguntas sobre:
+- Políticas de la tienda
+- Información de envíos
+- Garantías
+- Horarios
+- Métodos de pago
+
+Responde de manera clara, amable y concisa. Si no sabes algo, di que consultarás con el equipo."""
+
+    def _get_error_message(self, state: AgentState) -> str:
+        """Mensaje de error amigable."""
+        return "Lo siento, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?"
 
     def _get_timeout_message(self, state: AgentState) -> str:
-        """Mensaje cuando el LLM hace timeout."""
-        style = state.user_style or "neutral"
-
-        messages = {
-            "cuencano": (
-                "Ayayay, estoy un poco lento ahorita ve. "
-                "¿Me repites la pregunta? Ahora te respondo más rápido."
-            ),
-            "juvenil": (
-                "Che, perdón, estoy medio lento ahora. "
-                "¿Repetís la pregunta? Ahora te contesto al toque."
-            ),
-            "formal": (
-                "Disculpe la demora. Estoy experimentando lentitud en el sistema. "
-                "¿Podría reformular su consulta?"
-            ),
-            "neutral": (
-                "Disculpa la demora. El sistema está un poco lento. "
-                "¿Puedes repetir tu pregunta?"
-            ),
-        }
-
-        return messages.get(style, messages["neutral"])
-
-    def _get_error_message(self, state: AgentState, error: Exception) -> str:
-        """Mensaje genérico de error."""
-        style = state.user_style or "neutral"
-
-        # Loggear el error pero no exponerlo al usuario
-        error_type = type(error).__name__
-
-        messages = {
-            "cuencano": (
-                "Ayayay, tuve un problemita ve. "
-                "¿Puedo ayudarte con algo más?"
-            ),
-            "juvenil": (
-                "Uh, hubo un error bro. "
-                "¿Querés que te ayude con otra cosa?"
-            ),
-            "formal": (
-                "Lamento informarle que ha ocurrido un error técnico. "
-                "¿Puedo asistirle con algo más?"
-            ),
-            "neutral": (
-                "Lo siento, ocurrió un error. "
-                "¿Puedo ayudarte con algo más?"
-            ),
-        }
-
-        logger.debug(f"Error type for user message: {error_type}")
-        return messages.get(style, messages["neutral"])
-
-    def _is_error_message(self, message: str) -> bool:
-        """Detecta si un mensaje es un mensaje de error/fallback."""
-        error_indicators = [
-            "problema técnico",
-            "problemita",
-            "error técnico",
-            "inconveniente técnico",
-            "demora",
-            "lentitud",
-            "un poco lento",
-        ]
-
-        message_lower = message.lower()
-        return any(indicator in message_lower for indicator in error_indicators)
-
-    def _build_system_prompt(self, state: AgentState) -> str:
-        """
-        Construye el system prompt adaptado al estilo del usuario.
-        """
-        style = state.user_style or "neutral"
-
-        # Base común para todos los estilos
-        base_prompt = """Eres Alex, un vendedor experto de calzado deportivo de alta gama.
-
-**TU OBJETIVO:** Cerrar ventas siendo persuasivo pero genuino.
-
-**REGLA CRÍTICA DE CONCISIÓN:**
-- MÁXIMO 40-50 palabras por respuesta
-- Móvil/WhatsApp = mensajes cortos
-- Una pregunta a la vez, NUNCA 4 preguntas juntas
-- Ejemplo CORRECTO (35 palabras): "¡Excelente! ¿Para correr en asfalto o montaña?"
-- Ejemplo INCORRECTO (200 palabras): "Excelente elección... [párrafo largo]... ¿Corres en asfalto o pista? ¿Qué distancias? ¿Qué amortiguación?..."
-
-**REGLA ANTI-ALUCINACIÓN:**
-- SOLO menciona productos que aparecen en "PRODUCTOS DISPONIBLES"
-- NUNCA inventes nombres de modelos
-- Si no hay productos en la lista, di "No tengo ese modelo en stock"
-- Temperatura = 0 para nombres de productos
-
-**REGLA DE CONTEXTO (Slot Filling):**
-- Revisa "INFORMACIÓN YA OBTENIDA" antes de preguntar
-- NUNCA pidas talla/modelo/color si ya lo sabes
-- Si el usuario ya te dijo algo, úsalo directamente
-
-**REGLA DE SALIDA ELEGANTE (Stop Intent):**
-- Si detectas: "mejor no", "chao", "luego veo", "está muy caro gracias"
-- Responde: "Entendido, aquí estaré si cambias de opinión. ¡Buen día!"
-- NO insistas ni sigas vendiendo
-
-**REGLA DE BESTSELLERS (Fallback):**
-- Si el usuario es vago 2 veces, NO preguntes más
-- Recomienda los 3 productos más caros de la lista como "bestsellers"
-- Ejemplo: "Te recomiendo nuestros top 3: [Modelo A $X], [Modelo B $Y], [Modelo C $Z]"
-
-**REGLA VISUAL:**
-- Usa negritas (**) SOLO para precios y nombres de modelos
-- NO uses texto narrativo: "(Pausa simulada...)", "(Verificando stock...)"
-- Ve directo al grano
-
-**TÉCNICAS DE VENTA:**
-1. **Manejo de Objeciones:** Justifica precio en 1 línea (calidad + durabilidad)
-2. **Urgencia:** "Solo quedan X" (máximo 5 palabras)
-3. **Cierre:** Termina con pregunta de acción corta
-4. **Especificaciones:** Máximo 1 línea por característica técnica"""
-
-        # Adaptaciones según estilo
-        style_adaptations = {
-            "cuencano": """
-
-**ESTILO DE COMUNICACIÓN: CUENCANO**
-- Usa modismos: "ve", "full", "chevere", "lindo" (con moderación)
-- Reduce "ayayay" - úsalo solo 1 vez por conversación
-- Tono cercano pero NO exagerado (menos intensidad emocional)
-- Ejemplos cortos:
-  * "Estos están de lujo ve. ¿Cuál te gusta?" (10 palabras)
-  * "Full buenos, te duran años. ¿Los separamos?" (8 palabras)
-  * "Tengo talla 42 en Negro y Azul. ¿Cuál?" (9 palabras)
-""",
-            "juvenil": """
-
-**ESTILO DE COMUNICACIÓN: JUVENIL**
-- Tono casual: "che", "bro", "tipo", "re"
-- Sin emojis (a menos que el usuario los use)
-- Mantén mensajes ultra cortos
-- Ejemplos:
-  * "Che, estos son los mejores. ¿Los querés?" (8 palabras)
-  * "Re copados para running. ¿Qué talla?" (6 palabras)
-  * "Tengo en 42. ¿Confirmamos?" (5 palabras)
-""",
-            "formal": """
-
-**ESTILO DE COMUNICACIÓN: FORMAL**
-- Trato de usted
-- Eficiente, NO verboso
-- Ejemplos cortos:
-  * "Le recomiendo estos por su amortiguación superior. ¿Le interesan?" (10 palabras)
-  * "Disponible en talla 42. ¿Desea proceder?" (7 palabras)
-  * "Excelente durabilidad. Garantía de un año. ¿Lo confirmo?" (9 palabras)
-""",
-            "neutral": """
-
-**ESTILO DE COMUNICACIÓN: NEUTRAL**
-- Amigable y directo
-- Mensajes concisos
-- Ejemplos:
-  * "Estos tienen excelente amortiguación. ¿Te gustan?" (6 palabras)
-  * "Disponible en talla 42. ¿Los quieres?" (7 palabras)
-  * "Los más vendidos: Pegasus $120, Bondi $150. ¿Cuál?" (9 palabras)
-""",
-        }
-
-        style_addition = style_adaptations.get(
-            style, style_adaptations["neutral"]
-        )
-
-        # Agregar información de slots (contexto ya obtenido)
-        slots_context = ""
-        if state.conversation_slots:
-            slots_info = ", ".join([f"{k}: {v}" for k, v in state.conversation_slots.items()])
-            slots_context = f"""
-
-**INFORMACIÓN YA OBTENIDA (NO PREGUNTES ESTO DE NUEVO):**
-{slots_info}
-"""
-
-        # Agregar contexto de productos si hay búsqueda reciente
-        products_context = ""
-        if state.search_results:
-            products_context = f"""
-
-**PRODUCTOS DISPONIBLES (USA SOLO ESTOS NOMBRES):**
-{self._format_products_for_context(state.search_results[:5])}
-
-IMPORTANTE: NO inventes otros productos. Si buscas recomendar algo, usa estos.
-"""
-
-        # Agregar contador de preguntas sin respuesta
-        question_counter = ""
-        if state.unanswered_question_count >= 2:
-            question_counter = """
-
-**ALERTA:** El usuario ha sido vago 2+ veces. NO preguntes más.
-Recomienda los 3 productos más caros como "bestsellers" y cierra.
-"""
-
-        return base_prompt + style_addition + slots_context + products_context + question_counter
-
-    def _build_conversation_messages(
-        self, state: AgentState, system_prompt: str
-    ) -> List:
-        """Construye la lista de mensajes para el LLM."""
-        messages = [SystemMessage(content=system_prompt)]
-
-        # Agregar historial reciente (últimos 10 mensajes)
-        recent_history = state.conversation_history[-10:]
-        for msg in recent_history:
-            if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
-
-        # Agregar mensaje actual
-        messages.append(HumanMessage(content=state.user_query))
-
-        return messages
-
-    def _format_products_for_context(self, products: List[dict]) -> str:
-        """Formatea productos para incluir en el system prompt."""
-        lines = []
-        for p in products:
-            lines.append(
-                f"- {p['name']}: ${p['price']:,.2f} (Stock: {p['stock']})"
-            )
-        return "\n".join(lines)
-
-    def _detect_checkout_intent(
-        self, user_query: str, assistant_response: str
-    ) -> tuple[bool, str | None]:
-        """
-        Detecta si el usuario está listo para comprar.
-
-        Patrones de compra:
-        - "dámelos", "los quiero", "cómpralo", "envíamelos"
-        - "sí", "ok", "dale" (después de oferta)
-        - "procede", "confirma"
-        """
-        checkout_keywords = [
-            "dámelos",
-            "dámelo",
-            "los quiero",
-            "lo quiero",
-            "cómprame",
-            "envíame",
-            "envía",
-            "comprar",
-            "quiero comprar",
-            "procede",
-            "confirma",
-            "ok",
-            "dale",
-            "sí",
-            "si",
-            "bueno",
-        ]
-
-        query_lower = user_query.lower().strip()
-
-        # Verificar patrones de confirmación
-        for keyword in checkout_keywords:
-            if keyword in query_lower:
-                # Confirmar que hay productos en contexto
-                logger.info(
-                    f"Checkout intent detectado con keyword: {keyword}"
-                )
-                return True, "checkout"
-
-        # Verificar si el asistente preguntó por confirmación
-        confirmation_phrases = [
-            "¿te los envío?",
-            "¿confirmamos?",
-            "¿procedemos?",
-            "¿te lo mando?",
-            "¿hacemos el pedido?",
-        ]
-
-        assistant_lower = assistant_response.lower()
-        for phrase in confirmation_phrases:
-            if phrase in assistant_lower and len(query_lower) < 20:
-                # Si el asistente preguntó y el usuario dio respuesta corta afirmativa
-                affirmative_words = ["sí", "si", "ok", "dale", "bueno", "ya"]
-                if any(word in query_lower for word in affirmative_words):
-                    logger.info(
-                        f"Checkout intent por confirmación: {query_lower}"
-                    )
-                    return True, "checkout"
-
-        return False, None
-
-    def _update_conversation_slots(self, state: AgentState) -> None:
-        """
-        Extrae y actualiza slots de información del query del usuario.
-
-        Slots posibles:
-        - product_name: Nike, Adidas, Pegasus, etc.
-        - size/talla: 42, 9, 10.5, etc.
-        - color: negro, azul, rojo, etc.
-        - activity_type: correr, gym, basketball, etc.
-        - terrain_type: asfalto, montaña, pista, etc.
-        """
-        query_lower = state.user_query.lower()
-
-        # Detectar producto/marca en query
-        product_brands = ["nike", "adidas", "puma", "asics", "hoka", "pegasus", "bondi", "kayano"]
-        for brand in product_brands:
-            if brand in query_lower and "product_name" not in state.conversation_slots:
-                state.conversation_slots["product_name"] = brand.capitalize()
-                logger.debug(f"Slot 'product_name' detectado: {brand}")
-
-        # Detectar talla en query
-        import re
-        size_patterns = [
-            r'\btalla\s+(\d+(?:\.\d+)?)\b',
-            r'\b(\d+(?:\.\d+)?)\s*(?:us|usa|eu)?\b'
-        ]
-        for pattern in size_patterns:
-            match = re.search(pattern, query_lower)
-            if match and "size" not in state.conversation_slots:
-                size = match.group(1)
-                state.conversation_slots["size"] = size
-                logger.debug(f"Slot 'size' detectado: {size}")
-                break
-
-        # Detectar color en query
-        colors = ["negro", "blanco", "azul", "rojo", "verde", "gris", "amarillo"]
-        for color in colors:
-            if color in query_lower and "color" not in state.conversation_slots:
-                state.conversation_slots["color"] = color
-                logger.debug(f"Slot 'color' detectado: {color}")
-                break
-
-        # Detectar actividad
-        activities = {
-            "correr": ["correr", "running", "run", "carrera"],
-            "gym": ["gym", "gimnasio", "entrenar", "entrenamiento"],
-            "basketball": ["basket", "basketball", "baloncesto"],
-        }
-        for activity_name, keywords in activities.items():
-            if any(kw in query_lower for kw in keywords) and "activity_type" not in state.conversation_slots:
-                state.conversation_slots["activity_type"] = activity_name
-                logger.debug(f"Slot 'activity_type' detectado: {activity_name}")
-                break
-
-        # Detectar si el usuario respondió con información adicional a una pregunta del asistente
-        # Si la respuesta del usuario es muy corta (<10 palabras) y no contiene slots,
-        # incrementar contador de respuestas vagas
-        if len(state.user_query.split()) < 10 and not any([
-            "product_name" in state.conversation_slots,
-            "size" in state.conversation_slots,
-            "activity_type" in state.conversation_slots
-        ]):
-            # Solo incrementar si el último mensaje del asistente fue una pregunta
-            if state.conversation_history:
-                last_assistant = [m for m in state.conversation_history if m["role"] == "assistant"]
-                if last_assistant and "?" in last_assistant[-1]["content"]:
-                    state.unanswered_question_count += 1
-                    logger.debug(f"Contador de respuestas vagas: {state.unanswered_question_count}")
-        else:
-            # Resetear contador si el usuario dio información útil
-            if state.unanswered_question_count > 0:
-                state.unanswered_question_count = 0
-                logger.debug("Contador de respuestas vagas reseteado")
+        """Mensaje cuando hay timeout."""
+        return "Disculpa la demora. ¿Puedes repetir tu pregunta?"

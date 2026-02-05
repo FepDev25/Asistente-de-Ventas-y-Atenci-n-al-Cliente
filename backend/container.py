@@ -21,6 +21,7 @@ from backend.services.search_service import SearchService
 from backend.services.tenant_data_service import TenantDataService
 from backend.services.rag_service import RAGService
 from backend.services.session_service import SessionService, create_redis_client
+from backend.services.user_service import UserService
 from backend.config.redis_config import RedisSettings, get_redis_settings
 from backend.agents.retriever_agent import RetrieverAgent
 from backend.agents.sales_agent import SalesAgent
@@ -50,6 +51,12 @@ async def create_order_service(
 ) -> OrderService:
     """Fabrica el servicio de pedidos conectándolo a la DB."""
     return OrderService(session_factory)
+
+async def create_user_service(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> UserService:
+    """Fabrica el servicio de usuarios conectándolo a la DB."""
+    return UserService(session_factory)
 
 async def create_llm_provider_instance() -> LLMProvider:
     """Fabrica el proveedor de IA (Gemini)."""
@@ -134,9 +141,10 @@ async def create_retriever_agent(
 async def create_sales_agent(
     llm_provider: LLMProvider,
     rag_service: RAGService,
+    product_service: ProductService,
 ) -> SalesAgent:
     """Fabrica el Agente Vendedor (persuasión con LLM)."""
-    return SalesAgent(llm_provider, rag_service)
+    return SalesAgent(llm_provider, rag_service, product_service)
 
 
 async def create_checkout_agent(
@@ -176,6 +184,7 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     providers_list.append(aioinject.Singleton(create_session_factory))
     providers_list.append(aioinject.Singleton(create_product_service))
     providers_list.append(aioinject.Singleton(create_order_service))
+    providers_list.append(aioinject.Singleton(create_user_service))
 
     # 2. Redis y Sesiones
     providers_list.append(aioinject.Singleton(create_redis_settings))

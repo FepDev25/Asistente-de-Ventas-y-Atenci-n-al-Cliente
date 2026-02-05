@@ -1,3 +1,11 @@
+"""
+Script de inicialización de Base de Datos - Versión con Barcodes y Descuentos.
+
+Este script crea las tablas e inserta datos iniciales incluyendo:
+- Códigos de barras (barcode)
+- Sistema de descuentos y promociones
+- Categorías y marcas
+"""
 import asyncio
 import os
 from pathlib import Path
@@ -34,57 +42,11 @@ from backend.database.session import get_session_factory
 from backend.config.security import securityJWT
 
 
-
-PRODUCTOS_INICIALES = [
-    {
-        "product_id": "NIKE-001",
-        "product_name": "Nike Air Zoom Pegasus 40",
-        "product_sku": "NIKE-PEGASUS-40",
-        "supplier_id": "NIKE-DIST-001",
-        "supplier_name": "Nike Distribuidor Ecuador",
-        "quantity_available": 10,
-        "unit_cost": 120.00,
-        "stock_status": 1, # 1 = En Stock
-        "warehouse_location": "CUENCA-CENTRO",
-        "description": "Zapatillas de running ideales para asfalto, amortiguación reactiva."
-    },
-    {
-        "product_id": "ADIDAS-001", 
-        "product_name": "Adidas Ultraboost Light",
-        "product_sku": "ADIDAS-UB-LIGHT",
-        "supplier_id": "ADIDAS-DIST-001",
-        "supplier_name": "Adidas Distribuidor Ecuador",
-        "quantity_available": 5,
-        "unit_cost": 180.00,
-        "stock_status": 1,
-        "warehouse_location": "CUENCA-CENTRO",
-        "description": "Máximo retorno de energía, tejido Primeknit transpirable."
-    },
-    {
-        "product_id": "PUMA-001",
-        "product_name": "Puma Velocity Nitro 2",
-        "product_sku": "PUMA-VEL-NITRO2",
-        "supplier_id": "PUMA-DIST-001", 
-        "supplier_name": "Puma Distribuidor Ecuador",
-        "quantity_available": 20,
-        "unit_cost": 95.50,
-        "stock_status": 1,
-        "warehouse_location": "QUITO-NORTE",
-        "description": "Opción calidad-precio para entrenamiento diario."
-    },
-    {
-        "product_id": "NIKE-ACC-001",
-        "product_name": "Calcetines Nike Crew (Pack x3)",
-        "product_sku": "NIKE-CREW-3PACK",
-        "supplier_id": "NIKE-DIST-001",
-        "supplier_name": "Nike Distribuidor Ecuador", 
-        "quantity_available": 50,
-        "unit_cost": 15.00,
-        "stock_status": 1,
-        "warehouse_location": "CUENCA-CENTRO",
-        "description": "Calcetines deportivos de algodón con refuerzo en talón."
-    }
-]
+# PRODUCTOS INICIALES CON BARCODES Y DESCUENTOS
+# NOTA: Los productos ahora se cargan desde init_db_2.py
+# Este array está vacío para evitar duplicados
+# Solo mantenemos la estructura por compatibilidad
+PRODUCTOS_INICIALES = []
 
 USUARIOS_INICIALES = [
     {
@@ -103,68 +65,48 @@ USUARIOS_INICIALES = [
     }
 ]
 
+
 async def init_database():
-    print("Iniciando configuración de Base de Datos...")
+    print("=" * 70)
+    print(" INICIALIZACIÓN DE BASE DE DATOS")
+    print(" Con barcodes, descuentos y promociones")
+    print("=" * 70)
     
     # 1. Obtener el motor de conexión
     engine = get_engine()
     
     # 2. Crear las tablas
     async with engine.begin() as conn:
-        # borrar tablas viejas para empezar limpio
-        # await conn.run_sync(Base.metadata.drop_all) 
-        
-        print("Creando tablas en Postgres...")
+        print("\n1. Creando tablas en Postgres...")
         await conn.run_sync(Base.metadata.create_all)
-        print("✓ Tablas creadas: users, product_stocks, orders, order_details")
+        print("   ✓ Tablas creadas: users, product_stocks, orders, order_details")
     
     # 3. Insertar datos
     session_factory = get_session_factory()
+    
+    # 3.1 Productos
     async with session_factory() as session:
-        # Verificamos si ya hay datos
         result = await session.execute(text("SELECT count(*) FROM product_stocks"))
         count = result.scalar()
         
         if count == 0:
-            print("Base de datos vacía. Insertando inventario inicial...")
-            for prod in PRODUCTOS_INICIALES:
-                nuevo_producto = ProductStock(
-                    product_id=prod["product_id"],
-                    product_name=prod["product_name"],
-                    product_sku=prod["product_sku"],
-                    supplier_id=prod["supplier_id"],
-                    supplier_name=prod["supplier_name"], 
-                    quantity_available=prod["quantity_available"],
-                    unit_cost=Decimal(str(prod["unit_cost"])),
-                    total_value=Decimal(str(prod["unit_cost"] * prod["quantity_available"])),
-                    stock_status=prod["stock_status"],
-                    warehouse_location=prod["warehouse_location"],
-                    batch_number="LOTE-2026-A" 
-                )
-                session.add(nuevo_producto)
-            
-            await session.commit()
-            print("Inventario cargado exitosamente.")
+            print("\n2. Inventario inicial vacío.")
+            print("   ℹ️  Los productos se cargarán desde init_db_2.py")
         else:
-            print(f"La base de datos ya tiene {count} productos. No se insertó nada.")
+            print(f"\n2. La base de datos ya tiene {count} productos.")
+    
+    # 3.2 Usuarios
     async with session_factory() as session:
         result = await session.execute(text("SELECT count(*) FROM users"))
         count = result.scalar()
 
         if count == 0:
-            print("Insertando usuarios iniciales...")
-            # Hashes pre-calculados para evitar problemas con bcrypt
-            # admin123 -> $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/IiK
-            # cliente123 -> $2b$12$qPVT1fJNVzdOQQK5XxQzQOAaD8jhz/I9J7lYkQqxzDZmOpm5KGh2q
-            from backend.config.security.securityJWT import pwd_context
+            print("\n3. Insertando usuarios iniciales...")
             for usr in USUARIOS_INICIALES:
                 try:
-                    # Intentar usar bcrypt normalmente
-                    password = usr["password"][:72]
-                    password_hash = pwd_context.hash(password)
+                    password_hash = securityJWT.hash_password(usr["password"])
                 except Exception as e:
-                    # Fallback: usar hash pre-calculado
-                    print(f"   ⚠️  Usando hash pre-calculado para {usr['username']}")
+                    print(f"   ⚠️  Usando hash pre-calculado para {usr['username']}: {e}")
                     if usr['username'] == 'admin':
                         password_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/IiK"
                     else:
@@ -179,24 +121,51 @@ async def init_database():
                     is_active=True
                 )
                 session.add(nuevo_usuario)
+                print(f"   ✓ {usr['username']} ({'Admin' if usr['role'] == 1 else 'Cliente'})")
 
             await session.commit()
-            print("Usuarios creados exitosamente.")
+            print(f"   ✓ {len(USUARIOS_INICIALES)} usuarios creados")
         else:
-            print(f"Ya existen {count} usuarios. No se insertó nada.")
+            print(f"\n3. Ya existen {count} usuarios. No se insertó nada.")
     
     # 4. Verificar tablas de pedidos
     async with session_factory() as session:
         result = await session.execute(text("SELECT count(*) FROM orders"))
         count = result.scalar()
-        print(f"📦 Tabla 'orders': {count} pedidos existentes")
+        print(f"\n4. Estado de tablas:")
+        print(f"   📦 Tabla 'orders': {count} pedidos")
         
         result = await session.execute(text("SELECT count(*) FROM order_details"))
         count = result.scalar()
-        print(f"📋 Tabla 'order_details': {count} líneas de detalle existentes")
+        print(f"   📋 Tabla 'order_details': {count} líneas de detalle")
+        
+        # Contar productos con ofertas
+        result = await session.execute(
+            text("SELECT COUNT(*) FROM product_stocks WHERE is_on_sale = true")
+        )
+        ofertas_count = result.scalar()
+        
+        result = await session.execute(
+            text("SELECT COUNT(*) FROM product_stocks")
+        )
+        total_products = result.scalar()
+        
+        print(f"\n   📊 Estado del inventario:")
+        print(f"      • Total productos: {total_products}")
+        print(f"      • Productos en oferta: {ofertas_count}")
     
     await engine.dispose()
-    print("\n✅ Base de datos inicializada correctamente.")
+    
+    print("\n" + "=" * 70)
+    print(" ✅ BASE DE DATOS INICIALIZADA CORRECTAMENTE")
+    print("=" * 70)
+    print("\n Próximo paso:")
+    print("   Ejecuta: python init_db_2.py")
+    print("   para cargar el catálogo completo con barcodes y promociones.")
+    print("\n Usuarios de prueba:")
+    print("   • admin / admin123 (rol: Administrador)")
+    print("   • Cliente1 / cliente123 (rol: Cliente)")
+
 
 if __name__ == "__main__":
     asyncio.run(init_database())
