@@ -25,7 +25,16 @@ class AgentState(BaseModel):
 
     # Estado de búsqueda
     search_results: Optional[List[Dict[str, Any]]] = None
-    selected_products: List[Dict[str, Any]] = Field(default_factory=list)
+    selected_products: List[str] = Field(default_factory=list)  # UUIDs de productos seleccionados
+
+    # NUEVO: Etapa de conversación para flujo end-to-end
+    conversation_stage: Optional[str] = Field(
+        default=None,
+        description="Etapa actual: esperando_confirmacion, esperando_datos_envio, listo_para_checkout, buscando_alternativas"
+    )
+    
+    # NUEVO: Metadata adicional para sesiones
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     # Slot Filling - Información ya obtenida del usuario
     conversation_slots: Dict[str, Any] = Field(default_factory=dict)

@@ -33,8 +33,10 @@ from backend.services.user_service import UserService, UserAlreadyExistsError, U
 from backend.services.order_service import OrderService, OrderServiceError, InsufficientStockError, ProductNotFoundError
 from backend.services.product_service import ProductService
 from backend.services.product_comparison_service import ProductComparisonService
+from backend.services.session_service import SessionService
 from backend.llm.provider import LLMProvider
 from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
+from backend.domain.agent_schemas import AgentState
 from backend.domain.guion_schemas import GuionEntrada, ProductoEnGuion, PreferenciasUsuario, ContextoBusqueda
 from backend.tools.agent2_recognition_client import ProductRecognitionClient
 from backend.agents.sales_agent import SalesAgent
@@ -474,7 +476,8 @@ class BusinessMutation:
         info: Info,
         guion: GuionEntradaInput,
         product_service: Annotated[ProductService, Inject],
-        llm_provider: Annotated['LLMProvider', Inject],
+        llm_provider: Annotated[LLMProvider, Inject],
+        session_service: Annotated[SessionService, Inject],
     ) -> RecomendacionResponse:
         """
         Procesa un guion del Agente 2 y genera una recomendación.
@@ -686,6 +689,31 @@ class BusinessMutation:
                 # Fallback simple
                 mensaje = f"Te recomiendo el {best_product.product_name} a ${best_product.final_price:.2f}. Es una excelente opción. ¿Te interesa?"
             
+            # Guardar sesión en Redis para continuar conversación
+            try:
+                agent_state = AgentState(
+                    session_id=guion.session_id,
+                    user_query=guion.texto_original_usuario,
+                    search_results=[{
+                        "id": str(p.id),
+                        "name": p.product_name,
+                        "price": float(p.final_price),
+                        "barcode": p.barcode,
+                        "is_on_sale": p.is_on_sale
+                    } for p in recommendation.products],
+                    selected_products=[str(recommendation.best_option_id)],
+                    conversation_stage="esperando_confirmacion",
+                    metadata={
+                        "estilo": guion.preferencias.estilo_comunicacion,
+                        "producto_recomendado": best_product.product_name,
+                        "precio": float(best_product.final_price)
+                    }
+                )
+                await session_service.save_session(guion.session_id, agent_state)
+                logger.info(f"Sesión guardada: {guion.session_id}")
+            except Exception as e:
+                logger.error(f"Error guardando sesión: {e}")
+            
             return RecomendacionResponse(
                 success=True,
                 mensaje=mensaje,
@@ -704,4 +732,182 @@ class BusinessMutation:
                 mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
                 reasoning="Ocurrió un error interno",
                 siguiente_paso="reintentar"
+            )
+    
+    @strawberry.mutation
+    @inject
+    async def continuar_conversacion(
+        self,
+        info: Info,
+        session_id: str,
+        respuesta_usuario: str,
+        session_service: Annotated[SessionService, Inject],
+        product_service: Annotated[ProductService, Inject],
+        llm_provider: Annotated[LLMProvider, Inject],
+    ) -> RecomendacionResponse:
+        """
+        Continúa una conversación guardada en sesión.
+        
+        Flujo:
+        1. Recupera sesión de Redis
+        2. Procesa respuesta del usuario (sí/no)
+        3. Si aprueba: pide talla y dirección, o crea orden si ya tiene datos
+        4. Si rechaza: vuelve a recomendar o pregunta qué quiere
+        
+        Args:
+            session_id: ID de sesión de la conversación anterior
+            respuesta_usuario: Texto de respuesta del usuario
+            
+        Returns:
+            RecomendacionResponse con siguiente mensaje
+        """
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        # 1. Recuperar sesión
+        state = await session_service.get_session(session_id)
+        if not state:
+            return RecomendacionResponse(
+                success=False,
+                mensaje="La sesión expiró. Por favor, inicia una nueva conversación.",
+                productos=[],
+                mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                reasoning="Sesión no encontrada",
+                siguiente_paso="nueva_conversacion"
+            )
+        
+        estilo = state.metadata.get("estilo", "neutral")
+        producto_nombre = state.metadata.get("producto_recomendado", "el producto")
+        precio = state.metadata.get("precio", 0)
+        
+        # 2. Analizar intención del usuario
+        respuesta_lower = respuesta_usuario.lower()
+        
+        # Palabras de aprobación
+        aprobaciones = ["sí", "si", "ok", "dale", "perfecto", "me gusta", "interesa", "lo quiero", "comprar", "adelante"]
+        # Palabras de rechazo
+        rechazos = ["no", "no gracias", "otro", "diferente", "no me gusta", "paso", "rechazar"]
+        # Datos de envío (talla, dirección)
+        tiene_talla = any(palabra in respuesta_lower for palabra in ["talla", "calzo", "número", "numero", "size"])
+        tiene_direccion = any(palabra in respuesta_lower for palabra in ["dirección", "direccion", "calle", "casa", "departamento", "apt", "piso"])
+        
+        es_aprobacion = any(aprob in respuesta_lower for aprob in aprobaciones)
+        es_rechazo = any(rech in respuesta_lower for rech in rechazos)
+        
+        # 3. Generar respuesta según intención
+        if es_aprobacion or (state.conversation_stage == "esperando_datos_envio" and (tiene_talla or tiene_direccion)):
+            # Usuario aprueba o está dando datos de envío
+            
+            if state.conversation_stage == "esperando_confirmacion":
+                # Primera aprobación - pedir datos de envío
+                state.conversation_stage = "esperando_datos_envio"
+                await session_service.save_session(session_id, state)
+                
+                # Generar mensaje pidiendo datos
+                system_prompts = {
+                    "cuencano": "Eres un vendedor ecuatoriano cálido. Pide talla y dirección de forma natural, como hablando con un amigo.",
+                    "juvenil": "Eres un vendedor joven y casual. Pide talla y dirección de forma directa.",
+                    "formal": "Eres un vendedor profesional. Pide talla y dirección de forma educada.",
+                    "neutral": "Eres un vendedor amigable. Pide talla y dirección de forma natural."
+                }
+                
+                prompt = f"El usuario quiere comprar {producto_nombre} a ${precio:.2f}. Pídele la talla y dirección de envío en una sola pregunta natural."
+                
+                try:
+                    messages = [
+                        SystemMessage(content=system_prompts.get(estilo, system_prompts["neutral"])),
+                        HumanMessage(content=prompt)
+                    ]
+                    response = await llm_provider.model.ainvoke(messages)
+                    mensaje = response.content.strip()
+                except:
+                    mensaje = "¡Excelente! Para completar tu compra, ¿qué talla necesitas y a qué dirección te los enviamos?"
+                
+                return RecomendacionResponse(
+                    success=True,
+                    mensaje=mensaje,
+                    productos=[],
+                    mejor_opcion_id=UUID(state.selected_products[0]) if state.selected_products else UUID("00000000-0000-0000-0000-000000000000"),
+                    reasoning="Esperando datos de envío",
+                    siguiente_paso="solicitar_datos_envio"
+                )
+                
+            elif state.conversation_stage == "esperando_datos_envio":
+                # Usuario proporcionó datos - confirmar y enviar a checkout
+                
+                # Extraer talla y dirección (simplificado)
+                # En producción usarías NLP más sofisticado
+                state.metadata["datos_envio"] = respuesta_usuario
+                state.conversation_stage = "listo_para_checkout"
+                await session_service.save_session(session_id, state)
+                
+                system_prompts = {
+                    "cuencano": "Eres un vendedor ecuatoriano. Confirma los datos y di que va a pasar a caja de forma cálida.",
+                    "juvenil": "Eres un vendedor joven. Confirma y di que va a pasar a caja.",
+                    "formal": "Eres un vendedor profesional. Confirma los datos y confirma el paso a checkout.",
+                    "neutral": "Eres un vendedor amigable. Confirma y di que va a pasar a caja."
+                }
+                
+                prompt = f"Confirma que recibiste estos datos: '{respuesta_usuario}' para {producto_nombre}. Di que todo listo y que va a pasar a completar la compra en caja."
+                
+                try:
+                    messages = [
+                        SystemMessage(content=system_prompts.get(estilo, system_prompts["neutral"])),
+                        HumanMessage(content=prompt)
+                    ]
+                    response = await llm_provider.model.ainvoke(messages)
+                    mensaje = response.content.strip()
+                except:
+                    mensaje = f"¡Perfecto! Recibí tus datos. Ahora te llevo a completar la compra de {producto_nombre}."
+                
+                return RecomendacionResponse(
+                    success=True,
+                    mensaje=mensaje,
+                    productos=[],
+                    mejor_opcion_id=UUID(state.selected_products[0]) if state.selected_products else UUID("00000000-0000-0000-0000-000000000000"),
+                    reasoning="Listo para checkout",
+                    siguiente_paso="ir_a_checkout"
+                )
+                
+        elif es_rechazo:
+            # Usuario rechazó - preguntar qué quiere o buscar alternativas
+            state.conversation_stage = "buscando_alternativas"
+            await session_service.save_session(session_id, state)
+            
+            system_prompts = {
+                "cuencano": "Eres un vendedor ecuatoriano. Pregunta qué no le gustó o qué busca de forma cálida.",
+                "juvenil": "Eres un vendedor joven. Pregunta qué busca de forma casual.",
+                "formal": "Eres un vendedor profesional. Pregunta qué necesita diferente.",
+                "neutral": "Eres un vendedor amigable. Pregunta qué busca."
+            }
+            
+            prompt = f"El usuario no quiso {producto_nombre}. Pregúntale qué no le convenció o qué otro tipo de producto busca."
+            
+            try:
+                messages = [
+                    SystemMessage(content=system_prompts.get(estilo, system_prompts["neutral"])),
+                    HumanMessage(content=prompt)
+                ]
+                response = await llm_provider.model.ainvoke(messages)
+                mensaje = response.content.strip()
+            except:
+                mensaje = "Entiendo. ¿Qué es lo que buscas? Puedo mostrarte otras opciones."
+            
+            return RecomendacionResponse(
+                success=True,
+                mensaje=mensaje,
+                productos=[],
+                mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                reasoning="Buscando alternativas",
+                siguiente_paso="nueva_recomendacion"
+            )
+            
+        else:
+            # Respuesta no clara - pedir clarificación
+            return RecomendacionResponse(
+                success=True,
+                mensaje="¿Te interesa este producto o prefieres ver otras opciones?",
+                productos=[],
+                mejor_opcion_id=UUID(state.selected_products[0]) if state.selected_products else UUID("00000000-0000-0000-0000-000000000000"),
+                reasoning="Esperando clarificación",
+                siguiente_paso="confirmar_intencion"
             )
