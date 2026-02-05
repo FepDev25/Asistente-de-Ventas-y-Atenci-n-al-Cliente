@@ -33,6 +33,7 @@ from backend.services.user_service import UserService, UserAlreadyExistsError, U
 from backend.services.order_service import OrderService, OrderServiceError, InsufficientStockError, ProductNotFoundError
 from backend.services.product_service import ProductService
 from backend.services.product_comparison_service import ProductComparisonService
+from backend.llm.provider import LLMProvider
 from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
 from backend.domain.guion_schemas import GuionEntrada, ProductoEnGuion, PreferenciasUsuario, ContextoBusqueda
 from backend.tools.agent2_recognition_client import ProductRecognitionClient
@@ -473,6 +474,7 @@ class BusinessMutation:
         info: Info,
         guion: GuionEntradaInput,
         product_service: Annotated[ProductService, Inject],
+        llm_provider: Annotated['LLMProvider', Inject],
     ) -> RecomendacionResponse:
         """
         Procesa un guion del Agente 2 y genera una recomendación.
@@ -637,9 +639,56 @@ class BusinessMutation:
             elif guion_completo.contexto.intencion_principal == "informacion":
                 siguiente_paso = "mas_info"
             
+            # Generar mensaje persuasivo usando LLM
+            from langchain_core.messages import HumanMessage, SystemMessage
+            
+            best_product = recommendation.products[0]
+            
+            # Construir prompt para el LLM
+            estilo = guion_completo.preferencias.estilo_comunicacion
+            
+            system_prompts = {
+                "cuencano": "Eres un vendedor ecuatoriano, cálido y cercano. Hablas de forma natural como con un amigo. Usa expresiones como 'mirá', 'fíjate'. NO uses bullets ni listas. Máximo 3 oraciones.",
+                "juvenil": "Eres un vendedor joven, directo y energético. Hablas de forma casual y natural. NO uses bullets ni listas. Máximo 3 oraciones.",
+                "formal": "Eres un vendedor profesional y educado. Hablas con respeto pero cercanía. NO uses bullets ni listas. Máximo 3 oraciones.",
+                "neutral": "Eres un vendedor amigable y natural. Hablas de forma conversacional. NO uses bullets ni listas. Máximo 3 oraciones."
+            }
+            
+            system_prompt = system_prompts.get(estilo, system_prompts["neutral"])
+            
+            # Contexto del producto
+            producto_info = f"Producto: {best_product.product_name}\n"
+            producto_info += f"Precio: ${best_product.final_price:.2f}\n"
+            if best_product.is_on_sale:
+                producto_info += f"Descuento: {best_product.discount_percent}% (ahorras ${float(best_product.savings_amount):.2f})\n"
+                producto_info += f"Promoción: {best_product.promotion_description}\n"
+            producto_info += f"Stock: {best_product.quantity_available} unidades\n"
+            if guion_completo.preferencias.uso_previsto:
+                producto_info += f"Uso: {guion_completo.preferencias.uso_previsto}\n"
+            
+            # Productos alternativos si hay
+            if len(recommendation.products) > 1:
+                producto_info += "\nAlternativas:\n"
+                for p in recommendation.products[1:3]:
+                    producto_info += f"- {p.product_name}: ${p.final_price:.2f}\n"
+            
+            user_prompt = f"Genera un mensaje persuasivo recomendando este producto. Sé natural, menciona el precio y el descuento si aplica. Cierra preguntando si le interesa.\n\n{producto_info}"
+            
+            try:
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt)
+                ]
+                response = await llm_provider.model.ainvoke(messages)
+                mensaje = response.content.strip()
+            except Exception as e:
+                logger.warning(f"LLM no disponible para mensaje persuasivo: {e}")
+                # Fallback simple
+                mensaje = f"Te recomiendo el {best_product.product_name} a ${best_product.final_price:.2f}. Es una excelente opción. ¿Te interesa?"
+            
             return RecomendacionResponse(
                 success=True,
-                mensaje="Recomendación generada exitosamente",
+                mensaje=mensaje,
                 productos=productos_response,
                 mejor_opcion_id=recommendation.best_option_id,
                 reasoning=recommendation.reasoning,

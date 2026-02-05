@@ -235,62 +235,46 @@ class ProductComparisonService:
         preferencias: PreferenciasUsuario
     ) -> str:
         """
-        Genera un análisis persuasivo de por qué el producto es la mejor opción.
+        Genera un análisis simple de por qué el producto es la mejor opción.
+        Texto plano sin formato markdown ni emojis excesivos.
         """
-        lines = []
+        partes = []
         
-        # Título
-        lines.append(f"**🏆 RECOMENDACIÓN: {best.product.product_name}**")
-        lines.append("")
+        # Producto recomendado
+        partes.append(f"Recomendación: {best.product.product_name}")
         
-        # Precio
+        # Precio de forma simple
         if best.product.is_on_sale:
-            lines.append(f"💰 **PRECIO ESPECIAL:**")
-            lines.append(f"   Antes: ~~${best.product.unit_cost:.2f}~~")
-            lines.append(f"   Ahora: **${best.product.final_price:.2f}**")
-            lines.append(f"   ¡Ahorras: ${best.product.savings_amount:.2f}!")
+            partes.append(
+                f"Precio: ${best.product.final_price:.2f} "
+                f"(antes ${best.product.unit_cost:.2f}, "
+                f"ahorras ${best.product.savings_amount:.2f})"
+            )
             if best.product.promotion_description:
-                lines.append(f"   🎁 {best.product.promotion_description}")
+                partes.append(f"Promoción: {best.product.promotion_description}")
         else:
-            lines.append(f"💰 **Precio:** ${best.product.final_price:.2f}")
-        lines.append("")
+            partes.append(f"Precio: ${best.product.final_price:.2f}")
         
-        # Por qué es la mejor opción
-        lines.append("**✅ Por qué es ideal para ti:**")
-        for reason in best.reasons[:5]:  # Top 5 razones
-            lines.append(f"   • {reason}")
-        lines.append("")
+        # Razones principales
+        if best.reasons:
+            razones_texto = ". ".join(best.reasons[:3])
+            partes.append(f"Razones: {razones_texto}")
         
-        # Comparación con otras opciones
+        # Comparación simple con alternativas
         if others:
-            lines.append("**📊 Comparación con otras opciones:**")
-            for other in others[:2]:  # Comparar con máximo 2
-                diff_price = other.product.final_price - best.product.final_price
-                diff_score = best.total_score - other.total_score
-                
-                if diff_price > 0:
-                    lines.append(f"   • vs {other.product.product_name}:")
-                    lines.append(f"     - Ahorras ${diff_price:.2f}")
-                    lines.append(f"     - {diff_score:.0f} puntos mejor según tus preferencias")
-                else:
-                    lines.append(f"   • vs {other.product.product_name}:")
-                    lines.append(f"     - Inviertes ${abs(diff_price):.2f} más")
-                    lines.append(f"     - Vale la diferencia por: {', '.join(best.reasons[:2])}")
-            lines.append("")
+            otra = others[0]
+            diff = otra.product.final_price - best.product.final_price
+            if diff > 0:
+                partes.append(
+                    f"Comparado con {otra.product.product_name}: "
+                    f"este ahorra ${diff:.2f}"
+                )
         
-        # Stock
+        # Stock si es bajo
         if best.product.quantity_available <= 5:
-            lines.append(f"⚠️ **Stock limitado:** Solo quedan {best.product.quantity_available} unidades")
-            lines.append("")
+            partes.append(f"Stock: Solo {best.product.quantity_available} unidades disponibles")
         
-        # Cierre persuasivo
-        if preferencias.uso_previsto:
-            lines.append(f"🎯 Este modelo está específicamente diseñado para **{preferencias.uso_previsto}**.")
-        
-        if best.product.is_on_sale:
-            lines.append("⏰ La promoción es por tiempo limitado, ¡aprovecha hoy!")
-        
-        return "\n".join(lines)
+        return " ".join(partes)
     
     def format_product_for_chat(
         self,

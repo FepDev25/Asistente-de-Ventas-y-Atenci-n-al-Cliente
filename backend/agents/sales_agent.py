@@ -152,8 +152,9 @@ class SalesAgent(BaseAgent):
         except ValueError as e:
             logger.warning(f"Error en comparación: {e}")
             # Si falla la comparación, mostrar productos encontrados
+            mensaje_simple = await self._format_productos_simple(products, guion)
             return self._create_response(
-                message=self._format_productos_simple(products, guion),
+                message=mensaje_simple,
                 state=state,
                 should_transfer=False
             )
@@ -173,8 +174,8 @@ class SalesAgent(BaseAgent):
             for p in products
         ]
         
-        # 5. Generar mensaje persuasivo con estilo del usuario
-        mensaje = self._generar_mensaje_recomendacion(
+        # 5. Generar mensaje persuasivo con estilo del usuario (usando LLM)
+        mensaje = await self._generar_mensaje_recomendacion(
             recommendation, 
             guion.preferencias,
             guion
@@ -253,220 +254,184 @@ class SalesAgent(BaseAgent):
             should_transfer=False
         )
 
-    def _generar_mensaje_recomendacion(
+    async def _generar_mensaje_recomendacion(
         self,
         recommendation: 'ProductRecommendationResult',
         preferencias: 'PreferenciasUsuario',
         guion: GuionEntrada
     ) -> str:
         """
-        Genera un mensaje persuasivo personalizado según el estilo del usuario.
+        Genera un mensaje persuasivo usando el LLM para respuestas naturales.
         
-        Ya NO hay límite de 40-50 palabras. Mensajes completos y útiles.
+        El LLM recibe el contexto completo y genera una respuesta conversacional,
+        sin formato robótico de bullets ni markdown excesivo.
         """
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        producto = recommendation.products[0]
         estilo = preferencias.estilo_comunicacion
-        producto_recomendado = recommendation.products[0]
         
-        # Emojis y tono según estilo
-        emojis = {
-            "cuencano": {"saludo": "👋", "oferta": "🎉", "urgencia": "⚡", "mejor": "🏆"},
-            "juvenil": {"saludo": "👋", "oferta": "🔥", "urgencia": "⏰", "mejor": "⭐"},
-            "formal": {"saludo": "", "oferta": "💼", "urgencia": "📅", "mejor": "✓"},
-            "neutral": {"saludo": "👋", "oferta": "🎁", "urgencia": "⏳", "mejor": "⭐"}
+        # Construir prompt para el LLM
+        system_prompt = self._build_prompt_estilo(estilo)
+        
+        # Contexto del producto
+        contexto_producto = self._build_contexto_producto(producto, recommendation, guion)
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=contexto_producto)
+        ]
+        
+        try:
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=10.0
+            )
+            return response.content.strip()
+        except asyncio.TimeoutError:
+            # Fallback simple si el LLM no responde
+            return self._fallback_mensaje(producto, guion)
+    
+    def _build_prompt_estilo(self, estilo: str) -> str:
+        """Build el system prompt según el estilo de comunicación."""
+        
+        base = """Eres Alex, un vendedor experto de una tienda de calzado deportivo.
+
+REGLAS IMPORTANTES:
+1. Responde en UN SOLO párrafo fluido, como hablarías con un cliente en persona
+2. NO uses bullets, listas, ni formato markdown con ** o ##
+3. NO uses emojis excesivos (máximo 1 opcional)
+4. Sé natural, conversacional y persuasivo
+5. Menciona el precio y descuento de forma orgánica, no como un listado
+6. Cierra con una pregunta natural para continuar la conversación
+7. Máximo 4-5 oraciones
+"""
+        
+        estilos = {
+            "cuencano": base + """
+Estilo: Cuencano/Ecuatoriano cercano
+- Usa expresiones como "mirá", "fíjate", "ve", "nomás"
+- Sé cálido y familiar, como un amigo recomendando
+- Ejemplo: "Mirá, estos Nike Air Max están en oferta a $104, te ahorrás $26. Son perfectos para caminar por la ciudad. ¿Te los preparo?"
+""",
+            "juvenil": base + """
+Estilo: Juvenil y casual
+- Sé directo, energético pero natural
+- Usa lenguaje coloquial actual
+- Ejemplo: "Che, encontré estos Air Max que están ideales. Están $104 con descuento, te ahorrás $26. Son cómodos para el día a día. ¿Te copan?"
+""",
+            "formal": base + """
+Estilo: Profesional y educado
+- Sé cortés pero cercano
+- Usa lenguaje claro y directo
+- Ejemplo: "Le recomiendo estos Nike Air Max que tenemos en oferta a $104, con un ahorro de $26. Son ideales para uso casual. ¿Le gustaría verlos?"
+""",
+            "neutral": base + """
+Estilo: Amigable y natural
+- Sé conversacional y directo
+- Evita formalismos excesivos
+- Ejemplo: "Encontré estos Nike Air Max perfectos para vos. Están en oferta a $104, te ahorrás $26. Son súper cómodos para caminar. ¿Te interesan?"
+"""
         }
-        e = emojis.get(estilo, emojis["neutral"])
         
-        # Construir mensaje según estilo
-        if estilo == "cuencano":
-            return self._mensaje_cuencano(producto_recomendado, recommendation, e, guion)
-        elif estilo == "juvenil":
-            return self._mensaje_juvenil(producto_recomendado, recommendation, e, guion)
-        elif estilo == "formal":
-            return self._mensaje_formal(producto_recomendado, recommendation, e, guion)
-        else:
-            return self._mensaje_neutral(producto_recomendado, recommendation, e, guion)
-
-    def _mensaje_cuencano(
+        return estilos.get(estilo, estilos["neutral"])
+    
+    def _build_contexto_producto(
         self, 
-        producto: 'ProductComparisonSchema', 
+        producto: 'ProductComparisonSchema',
         rec: 'ProductRecommendationResult',
-        e: dict,
         guion: GuionEntrada
     ) -> str:
-        """Mensaje en estilo cuencano."""
-        lineas = []
+        """Construye el contexto del producto para el LLM."""
         
-        # Saludo
-        lineas.append(f"{e['saludo']} ¡Ayayay, mirá lo que tengo para vos ve! {e['mejor']}")
-        lineas.append("")
+        # Info básica del producto
+        info = f"Producto recomendado: {producto.product_name}\n"
+        info += f"Precio actual: ${producto.final_price:.2f}\n"
         
-        # Producto recomendado
-        lineas.append(f"**{producto.product_name}**")
-        
-        # Precio con emoción
         if producto.is_on_sale:
-            lineas.append(f"💰 Antes ~~${producto.unit_cost:.2f}~~ → Ahora **${producto.final_price:.2f}**")
-            lineas.append(f"🎉 ¡Te ahorrás ${producto.savings_amount:.2f}! {e['oferta']}")
+            info += f"Precio original: ${producto.unit_cost:.2f}\n"
+            info += f"Descuento: {producto.discount_percent}% (Ahorro: ${producto.savings_amount:.2f})\n"
             if producto.promotion_description:
-                lineas.append(f"🎁 {producto.promotion_description}")
-        else:
-            lineas.append(f"💰 Precio: ${producto.final_price:.2f}")
+                info += f"Promoción: {producto.promotion_description}\n"
         
-        lineas.append("")
+        info += f"Stock disponible: {producto.quantity_available} unidades\n"
+        info += f"Razón de recomendación: {producto.reason}\n"
         
-        # Por qué es bueno
-        lineas.append("**¿Por qué este es el mejor para vos?**")
-        lineas.append(producto.reason)
-        lineas.append("")
-        
-        # Análisis de preferencias
+        # Preferencias del usuario
         if guion.preferencias.uso_previsto:
-            lineas.append(f"✅ Ideal para: {guion.preferencias.uso_previsto}")
+            info += f"Uso que le dará: {guion.preferencias.uso_previsto}\n"
+        if guion.preferencias.presupuesto_maximo:
+            info += f"Presupuesto: hasta ${guion.preferencias.presupuesto_maximo}\n"
         
-        if producto.recommendation_score > 80:
-            lineas.append(f"⭐ Calificación: {producto.recommendation_score:.0f}/100 - ¡Excelente match!")
-        
-        lineas.append("")
-        
-        # Stock
-        if producto.quantity_available <= 5:
-            lineas.append(f"{e['urgencia']} **Ojo ve:** Solo quedan {producto.quantity_available} unidades, se van volando!")
-        
-        # Cierre
-        lineas.append("")
-        lineas.append("¿Querés que te los reserve? ¡Dale nomás! 🛒")
-        
-        return "\n".join(lineas)
-
-    def _mensaje_juvenil(
-        self, 
-        producto: 'ProductComparisonSchema', 
-        rec: 'ProductRecommendationResult',
-        e: dict,
-        guion: GuionEntrada
-    ) -> str:
-        """Mensaje en estilo juvenil."""
-        lineas = []
-        
-        lineas.append(f"{e['saludo']} ¡Che, encontré el mejor para vos! {e['mejor']}")
-        lineas.append("")
-        lineas.append(f"**{producto.product_name}**")
-        
-        if producto.is_on_sale:
-            lineas.append(f"🔥 ~~${producto.unit_cost:.2f}~~ → **${producto.final_price:.2f}**")
-            lineas.append(f"💵 Ahorrás: ${producto.savings_amount:.2f}")
-        else:
-            lineas.append(f"💰 ${producto.final_price:.2f}")
-        
-        lineas.append("")
-        lineas.append("**Por qué este:**")
-        lineas.append(producto.reason)
-        lineas.append("")
-        
-        if producto.quantity_available <= 5:
-            lineas.append(f"{e['urgencia']} Últimas {producto.quantity_available} unidades!")
-        
-        lineas.append("")
-        lineas.append("¿Los llevamos?")
-        
-        return "\n".join(lineas)
-
-    def _mensaje_formal(
-        self, 
-        producto: 'ProductComparisonSchema', 
-        rec: 'ProductRecommendationResult',
-        e: dict,
-        guion: GuionEntrada
-    ) -> str:
-        """Mensaje en estilo formal."""
-        lineas = []
-        
-        lineas.append("Le presento mi recomendación:")
-        lineas.append("")
-        lineas.append(f"**{producto.product_name}**")
-        
-        if producto.is_on_sale:
-            lineas.append(f"Precio regular: ~~${producto.unit_cost:.2f}~~")
-            lineas.append(f"**Precio especial: ${producto.final_price:.2f}**")
-            lineas.append(f"Ahorro: ${producto.savings_amount:.2f}")
-            if producto.promotion_description:
-                lineas.append(f"Promoción aplicable: {producto.promotion_description}")
-        else:
-            lineas.append(f"Precio: ${producto.final_price:.2f}")
-        
-        lineas.append("")
-        lineas.append("**Análisis comparativo:**")
-        lineas.append(rec.reasoning)
-        lineas.append("")
-        
-        if producto.quantity_available <= 5:
-            lineas.append(f"Stock disponible: {producto.quantity_available} unidades.")
-        
-        lineas.append("")
-        lineas.append("¿Desea proceder con la compra de este modelo?")
-        
-        return "\n".join(lineas)
-
-    def _mensaje_neutral(
-        self, 
-        producto: 'ProductComparisonSchema', 
-        rec: 'ProductRecommendationResult',
-        e: dict,
-        guion: GuionEntrada
-    ) -> str:
-        """Mensaje en estilo neutral."""
-        lineas = []
-        
-        lineas.append(f"{e['mejor']} **Te recomiendo: {producto.product_name}**")
-        lineas.append("")
-        
-        # Precio
-        if producto.is_on_sale:
-            lineas.append(f"💰 ~~${producto.unit_cost:.2f}~~ → **${producto.final_price:.2f}**")
-            lineas.append(f"🎉 Ahorras ${producto.savings_amount:.2f}")
-        else:
-            lineas.append(f"💰 Precio: ${producto.final_price:.2f}")
-        
-        lineas.append("")
-        lineas.append("**¿Por qué este modelo?**")
-        lineas.append(producto.reason)
-        
+        # Productos alternativos si existen
         if len(rec.products) > 1:
-            lineas.append("")
-            lineas.append("**Comparación rápida:**")
+            info += "\nAlternativas consideradas:\n"
             for p in rec.products[1:3]:
-                diff = p.final_price - producto.final_price
-                if diff > 0:
-                    lineas.append(f"• vs {p.product_name}: Este ahorra ${diff:.2f}")
+                info += f"- {p.product_name}: ${p.final_price:.2f}\n"
         
-        if producto.quantity_available <= 5:
-            lineas.append("")
-            lineas.append(f"⚠️ Solo quedan {producto.quantity_available} unidades")
+        info += "\nGenera una respuesta persuasiva y natural recomendando este producto."
         
-        lineas.append("")
-        lineas.append("¿Te gustaría comprar este?")
+        return info
+    
+    def _fallback_mensaje(
+        self, 
+        producto: 'ProductComparisonSchema',
+        guion: GuionEntrada
+    ) -> str:
+        """Mensaje simple si el LLM no responde."""
         
-        return "\n".join(lineas)
+        msg = f"Te recomiendo el {producto.product_name}"
+        
+        if producto.is_on_sale:
+            msg += f" que está en oferta a ${producto.final_price:.2f} (te ahorrás ${producto.savings_amount:.2f})."
+        else:
+            msg += f" a ${producto.final_price:.2f}."
+        
+        msg += " " + producto.reason.split(";")[0] if ";" in producto.reason else producto.reason
+        msg += " ¿Te interesa?"
+        
+        return msg
 
-    def _format_productos_simple(
+    async def _format_productos_simple(
         self, 
         products: List['ProductStock'], 
         guion: GuionEntrada
     ) -> str:
-        """Formato simple cuando no se puede hacer comparación completa."""
-        lineas = ["Encontré estos productos:"]
-        lineas.append("")
+        """Formato simple cuando no se puede hacer comparación completa - usando LLM."""
+        from langchain_core.messages import HumanMessage, SystemMessage
         
+        # Preparar lista de productos
+        productos_info = []
         for p in products:
-            lineas.append(f"• **{p.product_name}**")
-            lineas.append(f"  Precio: ${p.final_price:.2f}")
+            info = f"- {p.product_name}: ${p.final_price:.2f}"
             if p.is_on_sale:
-                lineas.append(f"  🎉 En oferta: {p.promotion_description or 'Descuento disponible'}")
-            lineas.append("")
+                info += f" (en oferta, ahorrás ${float(p.unit_cost) - float(p.final_price):.2f})"
+            productos_info.append(info)
         
-        lineas.append("¿Cuál te interesa más?")
-        return "\n".join(lineas)
+        prompt = f"""Menciona estos productos de forma natural y conversacional, sin usar bullets ni listas:
 
+{chr(10).join(productos_info)}
+
+El cliente busca: {guion.preferencias.uso_previsto or "calzado deportivo"}
+
+Responde en 2-3 oraciones mencionando los productos disponibles y pregunta cuál le interesa."""
+        
+        messages = [
+            SystemMessage(content="Eres un vendedor amigable. Responde de forma natural, sin formato de lista."),
+            HumanMessage(content=prompt)
+        ]
+        
+        try:
+            response = await asyncio.wait_for(
+                self.llm_provider.model.ainvoke(messages),
+                timeout=8.0
+            )
+            return response.content.strip()
+        except:
+            # Fallback simple
+            nombres = ", ".join([p.product_name for p in products[:3]])
+            return f"Tengo disponibles {nombres}. ¿Cuál te interesa?"
+    
     def _detectar_intencion_compra(self, intencion: str) -> bool:
         """Detecta si la intención es compra directa."""
         return intencion in ["compra_directa", "comprar", "confirmar"]
