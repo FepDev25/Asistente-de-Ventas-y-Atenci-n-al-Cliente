@@ -794,7 +794,66 @@ class BusinessMutation:
         es_rechazo = any(rech in respuesta_lower for rech in rechazos)
         
         # 3. Generar respuesta según intención
-        if es_aprobacion or (state.conversation_stage == "esperando_datos_envio" and (tiene_talla or tiene_direccion)):
+        # IMPORTANTE: Rechazo se evalúa PRIMERO
+        if es_rechazo:
+            # Usuario rechazó - recomendar siguiente opción
+            
+            # Obtener alternativas disponibles (otros productos del guion)
+            alternativas = [p for p in state.search_results if p.get("id") != state.selected_products[0]]
+            
+            if alternativas:
+                # Tomar la primera alternativa y hacerla la nueva recomendación
+                nueva_opcion = alternativas[0]
+                state.selected_products = [nueva_opcion["id"]]
+                state.metadata["producto_recomendado"] = nueva_opcion["name"]
+                state.metadata["precio"] = nueva_opcion["price"]
+                state.conversation_stage = "esperando_confirmacion"
+                await session_service.save_session(session_id, state)
+                
+                # Generar mensaje con la nueva recomendación
+                system_prompts = {
+                    "cuencano": "Eres un vendedor ecuatoriano. Recomienda esta otra opción de forma natural.",
+                    "juvenil": "Eres un vendedor joven. Recomienda esta alternativa.",
+                    "formal": "Eres un vendedor profesional. Sugiera esta otra opción.",
+                    "neutral": "Eres un vendedor amigable. Recomienda esta alternativa."
+                }
+                
+                precio_info = f"${nueva_opcion['price']:.2f}"
+                if nueva_opcion.get('is_on_sale'):
+                    precio_info += " (en oferta)"
+                
+                prompt = f"El usuario no quiso {producto_nombre}. Recomiéndale esta alternativa: {nueva_opcion['name']} a {precio_info}. Sé breve y pregúntale si le interesa."
+                
+                try:
+                    messages = [
+                        SystemMessage(content=system_prompts.get(estilo, system_prompts["neutral"])),
+                        HumanMessage(content=prompt)
+                    ]
+                    response = await llm_provider.model.ainvoke(messages)
+                    mensaje = response.content.strip()
+                except:
+                    mensaje = f"Entiendo. Entonces mira esta opción: {nueva_opcion['name']} a {precio_info}. ¿Te interesa?"
+                
+                return RecomendacionResponse(
+                    success=True,
+                    mensaje=mensaje,
+                    productos=[],
+                    mejor_opcion_id=UUID(nueva_opcion["id"]),
+                    reasoning="Recomendando alternativa del guion",
+                    siguiente_paso="confirmar_compra"
+                )
+            else:
+                # No hay más alternativas en el guion
+                return RecomendacionResponse(
+                    success=True,
+                    mensaje="Entiendo. No tengo más opciones de las que te mostré. ¿Quieres que hagamos una nueva búsqueda?",
+                    productos=[],
+                    mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                    reasoning="Sin alternativas disponibles",
+                    siguiente_paso="nueva_conversacion"
+                )
+        
+        elif es_aprobacion or (state.conversation_stage == "esperando_datos_envio" and (tiene_talla or tiene_direccion)):
             # Usuario aprueba o está dando datos de envío
             
             if state.conversation_stage == "esperando_confirmacion":
@@ -867,47 +926,14 @@ class BusinessMutation:
                     reasoning="Listo para checkout",
                     siguiente_paso="ir_a_checkout"
                 )
-                
-        elif es_rechazo:
-            # Usuario rechazó - preguntar qué quiere o buscar alternativas
-            state.conversation_stage = "buscando_alternativas"
-            await session_service.save_session(session_id, state)
-            
-            system_prompts = {
-                "cuencano": "Eres un vendedor ecuatoriano. Pregunta qué no le gustó o qué busca de forma cálida.",
-                "juvenil": "Eres un vendedor joven. Pregunta qué busca de forma casual.",
-                "formal": "Eres un vendedor profesional. Pregunta qué necesita diferente.",
-                "neutral": "Eres un vendedor amigable. Pregunta qué busca."
-            }
-            
-            prompt = f"El usuario no quiso {producto_nombre}. Pregúntale qué no le convenció o qué otro tipo de producto busca."
-            
-            try:
-                messages = [
-                    SystemMessage(content=system_prompts.get(estilo, system_prompts["neutral"])),
-                    HumanMessage(content=prompt)
-                ]
-                response = await llm_provider.model.ainvoke(messages)
-                mensaje = response.content.strip()
-            except:
-                mensaje = "Entiendo. ¿Qué es lo que buscas? Puedo mostrarte otras opciones."
-            
-            return RecomendacionResponse(
-                success=True,
-                mensaje=mensaje,
-                productos=[],
-                mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
-                reasoning="Buscando alternativas",
-                siguiente_paso="nueva_recomendacion"
-            )
-            
+        
         else:
-            # Respuesta no clara - pedir clarificación
+            # No se entendió la respuesta
             return RecomendacionResponse(
                 success=True,
-                mensaje="¿Te interesa este producto o prefieres ver otras opciones?",
+                mensaje="¿Te interesa este producto o prefieres otra opción?",
                 productos=[],
                 mejor_opcion_id=UUID(state.selected_products[0]) if state.selected_products else UUID("00000000-0000-0000-0000-000000000000"),
                 reasoning="Esperando clarificación",
-                siguiente_paso="confirmar_intencion"
+                siguiente_paso="nueva_conversacion"
             )
