@@ -9,7 +9,7 @@ from uuid import UUID
 import strawberry
 
 # ============================================================================
-# TIPOS DE PRODUCTOS
+# TIPOS DE PRODUCTOS (ACTUALIZADOS CON DESCUENTOS)
 # ============================================================================
 
 @strawberry.type
@@ -17,18 +17,120 @@ class ProductStockType:
     """Lo que ve el cliente sobre un producto."""
     id: UUID
     product_name: str
+    barcode: Optional[str] = None
     
     # Precios y Stock
     unit_cost: Decimal
+    final_price: Decimal  # Precio con descuento
+    original_price: Optional[Decimal] = None  # Precio antes del descuento
     quantity_available: int
     stock_status: int  # 1=Disponible, 0=Agotado
     
-    # Ubicación (util para envios)
+    # Descuentos y Promociones
+    is_on_sale: bool = False
+    discount_percent: Optional[Decimal] = None
+    discount_amount: Optional[Decimal] = None
+    savings_amount: Decimal = Decimal("0")
+    promotion_code: Optional[str] = None
+    promotion_description: Optional[str] = None
+    
+    # Ubicación
     warehouse_location: str
     
-    # Extras (Descripción y Keywords)
+    # Extras
     shelf_location: Optional[str] 
     batch_number: Optional[str]
+    category: Optional[str] = None
+    brand: Optional[str] = None
+
+
+@strawberry.type
+class ProductComparisonType:
+    """Producto con información de comparación."""
+    id: UUID
+    product_name: str
+    barcode: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    
+    # Precios
+    unit_cost: Decimal
+    final_price: Decimal
+    savings_amount: Decimal
+    
+    # Descuentos
+    is_on_sale: bool
+    discount_percent: Optional[Decimal]
+    promotion_description: Optional[str]
+    
+    # Stock
+    quantity_available: int
+    
+    # Score de recomendación
+    recommendation_score: float
+    reason: str
+
+
+# ============================================================================
+# TIPOS DE GUION DEL AGENTE 2
+# ============================================================================
+
+@strawberry.input
+class ProductoEnGuionInput:
+    """Producto identificado por el Agente 2."""
+    codigo_barras: str
+    nombre_detectado: str
+    marca: Optional[str] = None
+    categoria: Optional[str] = None
+    prioridad: str = "media"  # alta, media, baja
+    motivo_seleccion: str = ""
+
+
+@strawberry.input
+class PreferenciasUsuarioInput:
+    """Preferencias del usuario extraídas por el Agente 2."""
+    estilo_comunicacion: str = "neutral"  # cuencano, juvenil, formal, neutral
+    uso_previsto: Optional[str] = None
+    nivel_actividad: Optional[str] = None  # alto, medio, bajo
+    talla_preferida: Optional[str] = None
+    color_preferido: Optional[str] = None
+    presupuesto_maximo: Optional[Decimal] = None
+    busca_ofertas: bool = False
+    urgencia: str = "media"  # alta, media, baja
+    caracteristicas_importantes: List[str] = strawberry.field(default_factory=list)
+
+
+@strawberry.input
+class ContextoBusquedaInput:
+    """Contexto de la búsqueda."""
+    tipo_entrada: str  # texto, voz, imagen, mixta
+    producto_mencionado_explicitamente: bool = False
+    necesita_recomendacion: bool = True
+    intencion_principal: str  # compra_directa, comparar, informacion, recomendacion
+    restricciones_adicionales: List[str] = strawberry.field(default_factory=list)
+
+
+@strawberry.input
+class GuionEntradaInput:
+    """Guion completo recibido del Agente 2."""
+    session_id: str
+    productos: List[ProductoEnGuionInput]
+    preferencias: PreferenciasUsuarioInput
+    contexto: ContextoBusquedaInput
+    texto_original_usuario: str
+    resumen_analisis: str
+    confianza_procesamiento: float
+
+
+@strawberry.type
+class RecomendacionResponse:
+    """Respuesta de recomendación de productos."""
+    success: bool
+    mensaje: str
+    productos: List[ProductComparisonType]
+    mejor_opcion_id: UUID
+    reasoning: str
+    siguiente_paso: str
 
 
 # ============================================================================
@@ -125,16 +227,7 @@ class OrderSummaryType:
 
 @strawberry.type
 class SemanticSearchResponse:
-    """
-    La respuesta de Alex (El Agente).
-
-    El campo 'error' indica si hubo algún problema:
-    - None: Respuesta exitosa
-    - "timeout": LLM o BD tardó demasiado
-    - "internal_error": Error técnico general
-    - "service_unavailable": Servicio no disponible
-    - "unauthorized": No autenticado
-    """
+    """La respuesta de Alex (El Agente)."""
     answer: str
     query: str
     error: Optional[str] = None

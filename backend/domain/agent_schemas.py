@@ -15,7 +15,13 @@ class AgentState(BaseModel):
 
     # Contexto del usuario
     user_style: Optional[Literal["cuencano", "formal", "juvenil", "neutral"]] = "neutral"
-    detected_intent: Optional[Literal["search", "persuasion", "checkout", "info"]] = None
+    detected_intent: Optional[Literal["search", "persuasion", "checkout", "info", "recomendacion"]] = None
+
+    # NUEVO: Guion del Agente 2 (procesamiento de entrada multimodal)
+    guion_agente2: Optional[Any] = Field(
+        default=None,
+        description="Guion estructurado del Agente 2 con códigos de barras y preferencias"
+    )
 
     # Estado de búsqueda
     search_results: Optional[List[Dict[str, Any]]] = None
@@ -23,7 +29,6 @@ class AgentState(BaseModel):
 
     # Slot Filling - Información ya obtenida del usuario
     conversation_slots: Dict[str, Any] = Field(default_factory=dict)
-    # Slots posibles: product_name, size, color, activity_type, terrain_type, etc.
 
     # Contador de preguntas sin respuesta
     unanswered_question_count: int = 0
@@ -39,11 +44,11 @@ class AgentState(BaseModel):
     # Usuario autenticado (si aplica)
     user_id: Optional[str] = None  # UUID como string
     
-    # Imagen subida por el usuario (para reconocimiento por Agente 2)
-    uploaded_image: Optional[bytes] = None  # Bytes de la imagen
-    uploaded_image_filename: Optional[str] = None  # Nombre del archivo
-    detected_product_from_image: Optional[str] = None  # Producto detectado por Agente 2
-    image_recognition_confidence: Optional[float] = None  # Confianza del reconocimiento
+    # Imagen subida por el usuario (legacy - ahora manejado por Agente 2)
+    uploaded_image: Optional[bytes] = None
+    uploaded_image_filename: Optional[str] = None
+    detected_product_from_image: Optional[str] = None
+    image_recognition_confidence: Optional[float] = None
     
     # Metadata
     current_agent: Optional[str] = None

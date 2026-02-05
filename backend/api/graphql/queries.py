@@ -87,7 +87,8 @@ class BusinessQuery:
         logger.info(f"GraphQL: Listando {limit} productos ({user_info})")
 
         try:
-            products = await product_service.search_by_name("")
+            # Buscar todos los productos activos (sin filtro de nombre)
+            products = await product_service.get_all_products(limit=limit)
 
             if not products:
                 logger.warning("No se encontraron productos en BD")
@@ -97,14 +98,24 @@ class BusinessQuery:
                 ProductStockType(
                     id=p.id,
                     product_name=p.product_name,
+                    barcode=p.barcode,
                     unit_cost=p.unit_cost,
+                    final_price=p.final_price if hasattr(p, 'final_price') and p.final_price else p.unit_cost,
+                    original_price=p.original_price,
                     quantity_available=p.quantity_available,
                     stock_status=p.stock_status,
                     warehouse_location=p.warehouse_location,
                     shelf_location=p.shelf_location,
-                    batch_number=p.batch_number
+                    batch_number=p.batch_number,
+                    is_on_sale=p.is_on_sale if hasattr(p, 'is_on_sale') else False,
+                    discount_percent=p.discount_percent if hasattr(p, 'discount_percent') else None,
+                    discount_amount=p.discount_amount if hasattr(p, 'discount_amount') else None,
+                    savings_amount=p.savings_amount if hasattr(p, 'savings_amount') else 0,
+                    promotion_description=p.promotion_description if hasattr(p, 'promotion_description') else None,
+                    category=p.category,
+                    brand=p.brand
                 )
-                for p in products[:limit]
+                for p in products
             ]
 
         except Exception as e:

@@ -25,11 +25,18 @@ from backend.api.graphql.types import (
     CreateOrderResponse,
     AuthResponse,
     ProductRecognitionResponse,
+    GuionEntradaInput,
+    RecomendacionResponse,
+    ProductComparisonType,
 )
 from backend.services.user_service import UserService, UserAlreadyExistsError, UserNotFoundError
 from backend.services.order_service import OrderService, OrderServiceError, InsufficientStockError, ProductNotFoundError
+from backend.services.product_service import ProductService
+from backend.services.product_comparison_service import ProductComparisonService
 from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
+from backend.domain.guion_schemas import GuionEntrada, ProductoEnGuion, PreferenciasUsuario, ContextoBusqueda
 from backend.tools.agent2_recognition_client import ProductRecognitionClient
+from backend.agents.sales_agent import SalesAgent
 import os
 
 
@@ -454,4 +461,198 @@ class BusinessMutation:
                 success=False,
                 error="Error interno procesando la imagen"
             )
-
+    
+    # ========================================================================
+    # NUEVO: PROCESAMIENTO DE GUION DEL AGENTE 2
+    # ========================================================================
+    
+    @strawberry.mutation
+    @inject
+    async def procesar_guion_agente2(
+        self,
+        info: Info,
+        guion: GuionEntradaInput,
+        product_service: Annotated[ProductService, Inject],
+    ) -> RecomendacionResponse:
+        """
+        Procesa un guion del Agente 2 y genera una recomendación.
+        
+        Este es el nuevo flujo principal:
+        1. Recibe guion con códigos de barras de productos identificados
+        2. Busca productos en BD por barcode
+        3. Compara productos analizando descuentos, promociones, stock
+        4. Genera recomendación persuasiva personalizada
+        
+        Requiere autenticación.
+        
+        Args:
+            guion: Guion estructurado del Agente 2
+            
+        Returns:
+            RecomendacionResponse con análisis comparativo y recomendación
+            
+        Example:
+            mutation {
+                procesarGuionAgente2(guion: {
+                    sessionId: "sess-123",
+                    productos: [
+                        {codigoBarras: "7501234567890", nombreDetectado: "Nike Pegasus", prioridad: "alta"}
+                    ],
+                    preferencias: {estiloComunicacion: "cuencano", presupuestoMaximo: 150},
+                    contexto: {tipoEntrada: "voz", intencionPrincipal: "comparar"},
+                    textoOriginalUsuario: "Busco zapatillas...",
+                    resumenAnalisis: "Usuario busca...",
+                    confianzaProcesamiento: 0.92
+                }) {
+                    success
+                    mensaje
+                    productos {
+                        productName
+                        finalPrice
+                        recommendationScore
+                        reason
+                    }
+                    mejorOpcionId
+                    reasoning
+                }
+            }
+        """
+        # Verificar autenticación
+        current_user = get_current_user(info)
+        if not current_user:
+            return RecomendacionResponse(
+                success=False,
+                mensaje="Debes iniciar sesión",
+                productos=[],
+                mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                reasoning="",
+                siguiente_paso="login"
+            )
+        
+        logger.info(
+            f"Procesando guion Agente 2: session={guion.session_id}, "
+            f"productos={len(guion.productos)}, user={current_user.get('username')}"
+        )
+        
+        try:
+            # 1. Convertir input GraphQL a schema Pydantic
+            productos_guion = [
+                ProductoEnGuion(
+                    codigo_barras=p.codigo_barras,
+                    nombre_detectado=p.nombre_detectado,
+                    marca=p.marca,
+                    categoria=p.categoria,
+                    prioridad=p.prioridad,
+                    motivo_seleccion=p.motivo_seleccion
+                )
+                for p in guion.productos
+            ]
+            
+            preferencias = PreferenciasUsuario(
+                estilo_comunicacion=guion.preferencias.estilo_comunicacion,
+                uso_previsto=guion.preferencias.uso_previsto,
+                nivel_actividad=guion.preferencias.nivel_actividad,
+                talla_preferida=guion.preferencias.talla_preferida,
+                color_preferido=guion.preferencias.color_preferido,
+                presupuesto_maximo=guion.preferencias.presupuesto_maximo,
+                busca_ofertas=guion.preferencias.busca_ofertas,
+                urgencia=guion.preferencias.urgencia,
+                caracteristicas_importantes=guion.preferencias.caracteristicas_importantes
+            )
+            
+            contexto = ContextoBusqueda(
+                tipo_entrada=guion.contexto.tipo_entrada,
+                producto_mencionado_explicitamente=guion.contexto.producto_mencionado_explicitamente,
+                necesita_recomendacion=guion.contexto.necesita_recomendacion,
+                intencion_principal=guion.contexto.intencion_principal,
+                restricciones_adicionales=guion.contexto.restricciones_adicionales
+            )
+            
+            guion_completo = GuionEntrada(
+                session_id=guion.session_id,
+                productos=productos_guion,
+                preferencias=preferencias,
+                contexto=contexto,
+                texto_original_usuario=guion.texto_original_usuario,
+                resumen_analisis=guion.resumen_analisis,
+                confianza_procesamiento=guion.confianza_procesamiento
+            )
+            
+            # 2. Extraer códigos de barras
+            barcodes = guion_completo.get_codigos_barras()
+            if not barcodes:
+                return RecomendacionResponse(
+                    success=False,
+                    mensaje="No se encontraron códigos de barras válidos en el guión",
+                    productos=[],
+                    mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                    reasoning="El guión no contiene códigos de barras válidos",
+                    siguiente_paso="reintentar"
+                )
+            
+            # 3. Buscar productos en la BD
+            products = await product_service.get_products_by_barcodes(barcodes)
+            
+            if not products:
+                return RecomendacionResponse(
+                    success=False,
+                    mensaje=f"No encontré productos con los códigos: {', '.join(barcodes)}",
+                    productos=[],
+                    mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                    reasoning="Los productos del guión no están disponibles en nuestro inventario",
+                    siguiente_paso="ver_alternativas"
+                )
+            
+            # 4. Comparar y generar recomendación
+            comparison_service = ProductComparisonService()
+            recommendation = await comparison_service.compare_and_recommend(
+                products, guion_completo
+            )
+            
+            # 5. Convertir a tipos GraphQL
+            productos_response = [
+                ProductComparisonType(
+                    id=p.id,
+                    product_name=p.product_name,
+                    barcode=p.barcode,
+                    brand=p.brand,
+                    category=p.category,
+                    unit_cost=p.unit_cost,
+                    final_price=p.final_price,
+                    savings_amount=p.savings_amount,
+                    is_on_sale=p.is_on_sale,
+                    discount_percent=p.discount_percent,
+                    promotion_description=p.promotion_description,
+                    quantity_available=p.quantity_available,
+                    recommendation_score=p.recommendation_score,
+                    reason=p.reason
+                )
+                for p in recommendation.products
+            ]
+            
+            # 6. Determinar siguiente paso
+            siguiente_paso = "confirmar_compra"
+            if guion_completo.contexto.necesita_recomendacion and len(products) > 1:
+                siguiente_paso = "confirmar_compra"
+            elif guion_completo.contexto.intencion_principal == "informacion":
+                siguiente_paso = "mas_info"
+            
+            return RecomendacionResponse(
+                success=True,
+                mensaje="Recomendación generada exitosamente",
+                productos=productos_response,
+                mejor_opcion_id=recommendation.best_option_id,
+                reasoning=recommendation.reasoning,
+                siguiente_paso=siguiente_paso
+            )
+            
+        except Exception as e:
+            logger.error(f"Error procesando guion: {e}", exc_info=True)
+            return RecomendacionResponse(
+                success=False,
+                mensaje=f"Error procesando el guión: {str(e)}",
+                productos=[],
+                mejor_opcion_id=UUID("00000000-0000-0000-0000-000000000000"),
+                reasoning="Ocurrió un error interno",
+                siguiente_paso="reintentar"
+            )

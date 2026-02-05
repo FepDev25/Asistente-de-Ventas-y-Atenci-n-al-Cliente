@@ -39,8 +39,7 @@ class ProductService:
     - Actualización de inventario (usado por OrderService)
     
     Nota: La creación de pedidos ahora es responsabilidad de OrderService.
-    Este servicio mantiene process_order() para compatibilidad hacia atrás,
-    pero se recomienda usar OrderService.create_order() para nuevas implementaciones.
+    Este servicio se mantiene para compatibilidad.
     """
     
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -48,16 +47,40 @@ class ProductService:
         self.session_factory = session_factory
         self.logger = get_logger("product_service")
 
+    async def get_all_products(self, limit: int = 50) -> list[ProductStock]:
+        """
+        Obtiene todos los productos activos.
+        
+        Args:
+            limit: Número máximo de productos a retornar
+            
+        Returns:
+            Lista de productos activos
+        """
+        try:
+            async with self.session_factory() as session:
+                query = (
+                    select(ProductStock)
+                    .where(ProductStock.is_active == True)
+                    .limit(limit)
+                )
+                
+                result = await asyncio.wait_for(
+                    session.execute(query),
+                    timeout=5.0
+                )
+                
+                products = list(result.scalars().all())
+                self.logger.info(f"🗃️ ProductService: Listados {len(products)} productos")
+                return products
+                
+        except Exception as e:
+            self.logger.error(f"Error listando productos: {e}")
+            return []
+
     async def search_by_name(self, name: str) -> list[ProductStock]:
         """
         Busca productos por nombre o palabras clave con manejo robusto de errores.
-
-        Usado por la Tool: 'consultar_inventario'.
-
-        Error Handling:
-        - Timeout de BD (>5s) → Retorna lista vacía
-        - BD caída → Retorna lista vacía con log
-        - Error de query → Retorna lista vacía
 
         Returns:
             Lista de productos encontrados (vacía en caso de error)
@@ -134,12 +157,6 @@ class ProductService:
     ) -> Optional[ProductStock]:
         """
         Obtiene un producto por su ID.
-        
-        Args:
-            product_id: ID del producto
-            
-        Returns:
-            El producto encontrado o None
         """
         try:
             async with self.session_factory() as session:
@@ -149,18 +166,101 @@ class ProductService:
             self.logger.error(f"Error consultando producto {product_id}: {e}")
             return None
 
+    async def get_product_by_barcode(
+        self, 
+        barcode: str
+    ) -> Optional[ProductStock]:
+        """
+        Obtiene un producto por su código de barras (EAN/UPC).
+        
+        Este método es CRÍTICO para la integración con el Agente 2.
+        El Agente 2 envía códigos de barras que usamos para buscar productos.
+        
+        Args:
+            barcode: Código de barras EAN/UPC
+            
+        Returns:
+            El producto encontrado o None
+        """
+        try:
+            async with self.session_factory() as session:
+                query = (
+                    select(ProductStock)
+                    .where(
+                        ProductStock.barcode == barcode,
+                        ProductStock.is_active == True
+                    )
+                )
+                result = await session.execute(query)
+                product = result.scalar_one_or_none()
+                
+                if product:
+                    self.logger.info(
+                        f"✅ Producto encontrado por barcode {barcode}: {product.product_name}"
+                    )
+                else:
+                    self.logger.warning(
+                        f"❌ Producto no encontrado con barcode: {barcode}"
+                    )
+                
+                return product
+                
+        except Exception as e:
+            self.logger.error(f"Error consultando producto por barcode '{barcode}': {e}")
+            return None
+
+    async def get_products_by_barcodes(
+        self, 
+        barcodes: List[str]
+    ) -> List[ProductStock]:
+        """
+        Obtiene múltiples productos por sus códigos de barras.
+        
+        Usado cuando el Agente 2 envía varios productos en el guión.
+        
+        Args:
+            barcodes: Lista de códigos de barras
+            
+        Returns:
+            Lista de productos encontrados (puede ser menor que la entrada)
+        """
+        if not barcodes:
+            return []
+        
+        try:
+            async with self.session_factory() as session:
+                query = (
+                    select(ProductStock)
+                    .where(
+                        ProductStock.barcode.in_(barcodes),
+                        ProductStock.is_active == True
+                    )
+                )
+                result = await session.execute(query)
+                products = list(result.scalars().all())
+                
+                # Log de resultados
+                found_barcodes = {p.barcode for p in products if p.barcode}
+                missing_barcodes = set(barcodes) - found_barcodes
+                
+                self.logger.info(
+                    f"🗃️ Búsqueda por barcodes: {len(products)}/{len(barcodes)} encontrados"
+                )
+                if missing_barcodes:
+                    self.logger.warning(f"❌ No encontrados: {missing_barcodes}")
+                
+                return products
+                
+        except Exception as e:
+            self.logger.error(f"Error consultando productos por barcodes: {e}")
+            return []
+
     async def get_product_by_name(
         self, 
         product_name: str
     ) -> Optional[ProductStock]:
         """
         Obtiene un producto por nombre exacto o parcial.
-        
-        Args:
-            product_name: Nombre del producto
-            
-        Returns:
-            El primer producto encontrado o None
         """
         try:
             async with self.session_factory() as session:
@@ -178,6 +278,47 @@ class ProductService:
             self.logger.error(f"Error consultando producto '{product_name}': {e}")
             return None
 
+    async def get_products_on_sale(
+        self,
+        limit: int = 20
+    ) -> List[ProductStock]:
+        """
+        Obtiene productos en oferta/promoción.
+        
+        Args:
+            limit: Máximo de resultados
+            
+        Returns:
+            Lista de productos con descuentos activos
+        """
+        from datetime import date as dt_date
+        
+        try:
+            async with self.session_factory() as session:
+                query = (
+                    select(ProductStock)
+                    .where(
+                        ProductStock.is_on_sale == True,
+                        ProductStock.is_active == True
+                    )
+                    .limit(limit)
+                )
+                result = await session.execute(query)
+                products = list(result.scalars().all())
+                
+                # Filtrar por fecha de validez
+                valid_products = []
+                for p in products:
+                    if p.promotion_valid_until is None or p.promotion_valid_until >= dt_date.today():
+                        valid_products.append(p)
+                
+                self.logger.info(f"🎉 Productos en oferta encontrados: {len(valid_products)}")
+                return valid_products
+                
+        except Exception as e:
+            self.logger.error(f"Error consultando productos en oferta: {e}")
+            return []
+
     async def check_stock(
         self, 
         product_id: UUID, 
@@ -185,13 +326,6 @@ class ProductService:
     ) -> tuple[bool, int, str]:
         """
         Verifica si hay stock suficiente para un producto.
-        
-        Args:
-            product_id: ID del producto
-            quantity: Cantidad requerida
-            
-        Returns:
-            Tupla de (hay_stock, stock_disponible, mensaje)
         """
         try:
             product = await self.get_product_by_id(product_id)
@@ -212,203 +346,6 @@ class ProductService:
             self.logger.error(f"Error verificando stock: {e}")
             return False, 0, "Error verificando disponibilidad"
 
-    async def process_order(
-        self, 
-        product_name: str, 
-        quantity: int,
-        create_order_record: bool = False,
-        user_id: Optional[UUID] = None
-    ) -> dict:
-        """
-        Procesa la venta: Valida stock y lo descuenta.
-        
-        DEPRECATED: Para nuevas implementaciones, usar OrderService.create_order()
-        Este método se mantiene para compatibilidad con herramientas LLM existentes.
-
-        Args:
-            product_name: Nombre del producto a buscar
-            quantity: Cantidad a comprar
-            create_order_record: Si True, crea un registro en la tabla orders
-            user_id: ID del usuario (requerido si create_order_record=True)
-
-        Returns:
-            Dict con resultado de la operación:
-            {
-                "success": bool,
-                "message": str,
-                "product_name": str,
-                "quantity": int,
-                "total": float,
-                "remaining_stock": int,
-                "order_id": UUID (solo si create_order_record=True)
-            }
-        """
-        try:
-            async with self.session_factory() as session:
-                # Buscar el producto directamente en esta sesión
-                query = (
-                    select(ProductStock)
-                    .where(
-                        ProductStock.product_name.ilike(f"%{product_name}%"),
-                        ProductStock.is_active == True
-                    )
-                )
-                result = await session.execute(query)
-                product = result.scalar_one_or_none()
-
-                if not product:
-                    self.logger.warning(f"Producto no encontrado: '{product_name}'")
-                    return {
-                        "success": False,
-                        "message": f"Error: No encontré el producto '{product_name}'.",
-                        "product_name": product_name,
-                        "quantity": quantity,
-                        "total": 0.0,
-                        "remaining_stock": 0
-                    }
-
-                # Validación de stock
-                if product.quantity_available < quantity:
-                    self.logger.warning(
-                        f"Stock insuficiente para '{product.product_name}': "
-                        f"solicitado={quantity}, disponible={product.quantity_available}"
-                    )
-                    return {
-                        "success": False,
-                        "message": (
-                            f"Stock insuficiente. Solo quedan {product.quantity_available} "
-                            f"unidades de {product.product_name}."
-                        ),
-                        "product_name": product.product_name,
-                        "quantity": quantity,
-                        "total": 0.0,
-                        "remaining_stock": product.quantity_available
-                    }
-
-                # Ejecutar la transacción (descontar)
-                product.quantity_available -= quantity
-                await session.commit()
-
-                total = product.unit_cost * quantity
-
-                self.logger.info(
-                    f"✅ Orden procesada: {product.product_name} "
-                    f"x{quantity} = ${total:.2f}"
-                )
-
-                result = {
-                    "success": True,
-                    "message": (
-                        f"¡VENTA EXITOSA!\n"
-                        f"Producto: {product.product_name}\n"
-                        f"Cantidad: {quantity}\n"
-                        f"Total: ${total:.2f}\n"
-                        f"Stock restante: {product.quantity_available}"
-                    ),
-                    "product_name": product.product_name,
-                    "quantity": quantity,
-                    "total": float(total),
-                    "remaining_stock": product.quantity_available
-                }
-
-                # Si se solicita crear el registro en orders
-                if create_order_record and user_id:
-                    try:
-                        from backend.services.order_service import OrderService
-                        from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
-                        
-                        order_service = OrderService(self.session_factory)
-                        
-                        order_data = OrderCreate(
-                            user_id=user_id,
-                            details=[
-                                OrderDetailCreate(
-                                    product_id=product.id,
-                                    quantity=quantity
-                                )
-                            ],
-                            shipping_address="Dirección no especificada (venta directa)",
-                            notes=f"Venta directa desde chat: {product_name}"
-                        )
-                        
-                        order, _ = await order_service.create_order(order_data)
-                        result["order_id"] = order.id
-                        result["message"] += f"\nPedido: #{str(order.id)[:8]}"
-                        
-                    except Exception as e:
-                        self.logger.error(f"Error creando registro de orden: {e}")
-                        # No fallamos la venta si no se puede crear el registro
-
-                return result
-
-        except asyncio.TimeoutError:
-            self.logger.error(
-                f"⏱️ Timeout procesando orden (>5s): {product_name} x{quantity}",
-                exc_info=False
-            )
-            return {
-                "success": False,
-                "message": (
-                    "Error: La base de datos no responde. "
-                    "Por favor intenta nuevamente en unos momentos."
-                ),
-                "product_name": product_name,
-                "quantity": quantity,
-                "total": 0.0,
-                "remaining_stock": 0
-            }
-
-        except OperationalError as e:
-            self.logger.error(
-                f"🚨 BD no disponible al procesar orden: {product_name} x{quantity}: {str(e)}",
-                exc_info=True
-            )
-            return {
-                "success": False,
-                "message": (
-                    "Error: No pudimos procesar tu pedido porque la base de datos "
-                    "no está disponible. Intenta más tarde."
-                ),
-                "product_name": product_name,
-                "quantity": quantity,
-                "total": 0.0,
-                "remaining_stock": 0
-            }
-
-        except SQLAlchemyError as e:
-            self.logger.error(
-                f"❌ Error de BD procesando orden {product_name} x{quantity}: {str(e)}",
-                exc_info=True
-            )
-            return {
-                "success": False,
-                "message": (
-                    "Error: No se pudo procesar tu pedido. "
-                    "Por favor contacta a soporte."
-                ),
-                "product_name": product_name,
-                "quantity": quantity,
-                "total": 0.0,
-                "remaining_stock": 0
-            }
-
-        except Exception as e:
-            self.logger.error(
-                f"💥 Error inesperado procesando orden {product_name} x{quantity}: {str(e)}",
-                exc_info=True
-            )
-            return {
-                "success": False,
-                "message": (
-                    "Error: Ocurrió un problema inesperado. "
-                    "Nuestro equipo ha sido notificado."
-                ),
-                "product_name": product_name,
-                "quantity": quantity,
-                "total": 0.0,
-                "remaining_stock": 0
-            }
-
     async def restore_stock(
         self, 
         product_id: UUID, 
@@ -416,13 +353,6 @@ class ProductService:
     ) -> bool:
         """
         Restaura stock de un producto (útil para cancelaciones).
-        
-        Args:
-            product_id: ID del producto
-            quantity: Cantidad a restaurar
-            
-        Returns:
-            True si se restauró exitosamente
         """
         try:
             async with self.session_factory() as session:
@@ -452,13 +382,6 @@ class ProductService:
     ) -> bool:
         """
         Actualiza el stock de un producto a un valor específico.
-        
-        Args:
-            product_id: ID del producto
-            new_quantity: Nueva cantidad disponible
-            
-        Returns:
-            True si se actualizó exitosamente
         """
         try:
             async with self.session_factory() as session:

@@ -1,28 +1,46 @@
-# Guía: Reiniciar Base de Datos desde Cero
+# Guía: Reiniciar Base de Datos con Nuevos Campos
 
-Esta guía te ayuda a reiniciar PostgreSQL con las nuevas tablas `orders` y `order_details`.
+> **Actualizado para:** Sistema con Barcodes, Descuentos y Promociones
 
 ---
 
 ## 🚀 Método Rápido (Script Automático)
 
-Ejecuta el script proporcionado:
+Ejecuta el script actualizado:
 
 ```bash
 ./reset_database.sh
 ```
 
-Esto hará todo automáticamente:
+Este script hará todo automáticamente:
 1. Detiene y elimina contenedores
 2. Elimina el volumen de datos
 3. Crea nuevos contenedores
-4. Ejecuta el script de inicialización
+4. Ejecuta el script de inicialización con **barcodes y descuentos**
+5. Carga el catálogo completo de productos
+
+---
+
+## 📊 Nuevos Campos en la Base de Datos
+
+### Tabla `product_stocks`
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `barcode` | VARCHAR(100) | Código de barras EAN/UPC (único) |
+| `brand` | VARCHAR(100) | Marca (Nike, Adidas, Puma, etc.) |
+| `category` | VARCHAR(100) | Categoría (running, lifestyle, training) |
+| `original_price` | NUMERIC(12,2) | Precio antes del descuento |
+| `discount_percent` | NUMERIC(5,2) | % de descuento (ej: 15.00) |
+| `discount_amount` | NUMERIC(12,2) | Monto fijo de descuento |
+| `promotion_code` | VARCHAR(50) | Código de promoción |
+| `promotion_description` | TEXT | Descripción de la promo |
+| `promotion_valid_until` | DATE | Fecha de expiración |
+| `is_on_sale` | BOOLEAN | ¿Está en oferta? |
 
 ---
 
 ## 📝 Método Manual (Paso a Paso)
-
-Si prefieres hacerlo manualmente o el script falla:
 
 ### Paso 1: Detener Contenedores
 ```bash
@@ -42,18 +60,12 @@ docker volume rm practica-4_postgres_data
 docker volume rm -f practica-4_postgres_data
 ```
 
-### Paso 3: Verificar Eliminación
-```bash
-# No debería aparecer el volumen
-docker volume ls | grep postgres
-```
-
-### Paso 4: Iniciar Contenedores Nuevos
+### Paso 3: Iniciar Contenedores Nuevos
 ```bash
 docker-compose up -d
 ```
 
-### Paso 5: Esperar a PostgreSQL
+### Paso 4: Esperar a PostgreSQL
 ```bash
 # Verificar que esté listo
 docker exec sales_agent_db pg_isready -U postgres
@@ -63,29 +75,38 @@ docker exec sales_agent_db pg_isready -U postgres
 sleep 5
 ```
 
-### Paso 6: Ejecutar Script de Inicialización
+### Paso 5: Ejecutar Scripts de Inicialización
 ```bash
+# Script principal (con barcodes y descuentos)
 python init.db.py
-```
 
-Deberías ver algo como:
-```
-Iniciando configuración de Base de Datos...
-Creando tablas en Postgres...
-✓ Tablas creadas: users, product_stocks, orders, order_details
-Base de datos vacía. Insertando inventario inicial...
-Inventario cargado exitosamente.
-Insertando usuarios iniciales...
-Usuarios creados exitosamente.
-📦 Tabla 'orders': 0 pedidos existentes
-📋 Tabla 'order_details': 0 líneas de detalle existentes
+# Cargar catálogo completo
+python init_db_2.py
 
-✅ Base de datos inicializada correctamente.
+# Crear DB de tests (opcional)
+python init_test_db.py
 ```
 
 ---
 
-## 🔍 Verificar que Todo Funciona
+## 🔧 Migración de Base de Datos Existente (Sin Perder Datos)
+
+Si ya tienes datos y no quieres reiniciar todo:
+
+```bash
+# Ejecutar script de migración
+python migrate_db_add_barcode_discounts.py
+```
+
+Este script:
+- Agrega las nuevas columnas sin borrar datos existentes
+- Asigna códigos de barras a productos existentes
+- Configura algunas promociones de ejemplo
+- Mantiene todos tus datos actuales
+
+---
+
+## 🔍 Verificar la Nueva Estructura
 
 ### Verificar Tablas
 ```bash
@@ -95,74 +116,113 @@ docker exec -it sales_agent_db psql -U postgres -d app_db
 # Listar tablas
 \dt
 
-# Ver estructura de orders
-\d orders
+# Ver estructura de product_stocks
+\d product_stocks
 
-# Ver estructura de order_details
-\d order_details
+# Ver productos con barcodes
+SELECT product_name, barcode, brand, category, is_on_sale, discount_percent
+FROM product_stocks
+LIMIT 10;
+
+# Ver productos en oferta
+SELECT product_name, barcode, unit_cost, discount_percent, promotion_description
+FROM product_stocks
+WHERE is_on_sale = true;
 
 # Salir
 \q
 ```
 
-### Verificar Contenedores
+### Verificar desde el Backend
 ```bash
-# Ver estado
-docker-compose ps
+# Iniciar el servidor
+python backend/main.py
 
-# Debería mostrar:
-# sales_agent_db    running
-# sales_agent_redis running
+# En otra terminal, hacer una query GraphQL:
+curl -X POST http://localhost:8000/graphql \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer TU_TOKEN" \
+  -d '{
+    "query": "{ listProducts(limit: 5) { productName barcode brand category isOnSale discountPercent finalPrice } }"
+  }'
 ```
 
 ---
 
-## 🧪 Probar con un Pedido de Ejemplo
+## 🧪 Probar el Nuevo Sistema
 
-Una vez reiniciada, puedes probar creando un pedido:
-
+### 1. Login y obtener token
 ```bash
-# Iniciar el servidor
-python backend/main.py
-```
-
-Y en otra terminal:
-```bash
-# Login para obtener token
 curl -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "Cliente1", "password": "cliente123"}'
-
-# Luego hacer un query de checkout (usa el token obtenido)
+  -d '{
+    "username": "Cliente1",
+    "password": "cliente123"
+  }'
 ```
 
-O usa el playground GraphQL en `http://localhost:8000/graphql`
+### 2. Procesar guion del Agente 2
+```graphql
+mutation {
+  procesarGuionAgente2(guion: {
+    sessionId: "test-001"
+    productos: [
+      {
+        codigoBarras: "7501234567890"
+        nombreDetectado: "Nike Air Zoom Pegasus 40"
+        marca: "Nike"
+        categoria: "running"
+        prioridad: "alta"
+        motivoSeleccion: "Mencionado por usuario"
+      }
+    ]
+    preferencias: {
+      estiloComunicacion: "cuencano"
+      presupuestoMaximo: 150
+      buscaOfertas: true
+    }
+    contexto: {
+      tipoEntrada: "texto"
+      intencionPrincipal: "comparar"
+      necesitaRecomendacion: true
+    }
+    textoOriginalUsuario: "Busco zapatillas Nike"
+    resumenAnalisis: "Test"
+    confianzaProcesamiento: 0.9
+  }) {
+    success
+    productos {
+      productName
+      barcode
+      finalPrice
+      isOnSale
+      recommendationScore
+    }
+    mejorOpcionId
+    reasoning
+  }
+}
+```
 
 ---
 
 ## 🛟 Solución de Problemas
 
-### Error: "volume is in use"
+### Error: "column does not exist"
 ```bash
-# Forzar eliminación
-docker-compose down -v  # Elimina contenedores y volúmenes
+# Si te falta alguna columna, ejecuta la migración:
+python migrate_db_add_barcode_discounts.py
 ```
 
-### Error: "permission denied"
+### Error: "duplicate key value violates unique constraint"
 ```bash
-# Dar permisos al script
-chmod +x reset_database.sh
-```
-
-### Error: "database app_db does not exist"
-```bash
-# Crear manualmente
-docker exec -it sales_agent_db psql -U postgres -c "CREATE DATABASE app_db;"
+# Si hay conflictos con barcodes, reinicia completamente:
+./reset_database.sh
 ```
 
 ### Error: "relation already exists"
 ```bash
-# Si las tablas ya existen, eliminarlas primero:
+# Eliminar tablas manualmente:
 docker exec -it sales_agent_db psql -U postgres -d app_db -c "
 DROP TABLE IF EXISTS order_details CASCADE;
 DROP TABLE IF EXISTS orders CASCADE;
@@ -171,56 +231,52 @@ DROP TABLE IF EXISTS users CASCADE;
 "
 ```
 
-### Puerto 5433 ya en uso
-```bash
-# Ver qué usa el puerto
-sudo lsof -i :5433
-
-# O cambiar el puerto en docker-compose.yml
-# Cambia "5433:5432" por "5434:5432" o similar
-```
-
 ---
 
-## 📊 Estructura de Tablas Creadas
-
-```sql
--- users (existente)
--- product_stocks (existente)
-
--- orders (NUEVA)
-- id: UUID PK
-- user_id: UUID FK -> users
-- status: VARCHAR (DRAFT, CONFIRMED, PAID, etc.)
-- subtotal, tax_amount, shipping_cost, discount_amount, total_amount: DECIMAL
-- shipping_address, shipping_city, shipping_state, shipping_country: TEXT/VARCHAR
-- contact_name, contact_phone, contact_email: VARCHAR
-- payment_method, payment_status: VARCHAR
-- notes, internal_notes: TEXT
-- session_id: VARCHAR
-- created_at, updated_at: TIMESTAMP
-
--- order_details (NUEVA)
-- id: UUID PK
-- order_id: UUID FK -> orders
-- product_id: UUID FK -> product_stocks
-- product_name, product_sku: VARCHAR (congelado al momento de compra)
-- quantity: INTEGER
-- unit_price, discount_amount: DECIMAL
-- created_at: TIMESTAMP
-```
-
----
-
-## ✅ Checklist Post-Reinicio
+## 📋 Checklist Post-Reinicio
 
 - [ ] Contenedores corriendo: `docker-compose ps`
-- [ ] Tablas creadas: `docker exec sales_agent_db psql -U postgres -d app_db -c "\dt"`
-- [ ] Datos iniciales: productos y usuarios
+- [ ] Tablas creadas con nuevos campos
+- [ ] Productos con barcodes cargados
+- [ ] Algunos productos tienen `is_on_sale = true`
 - [ ] Servidor inicia sin errores: `python backend/main.py`
 - [ ] Login funciona: POST /auth/login
-- [ ] GraphQL responde: GET /graphql
+- [ ] Query de productos muestra barcodes: GraphQL listProducts
+- [ ] Procesar guion funciona: mutation procesarGuionAgente2
 
 ---
 
-**¿Listo?** Ejecuta `./reset_database.sh` y empieza de cero 🚀
+## 🎯 Estructura de Datos Final
+
+```
+product_stocks
+├── id (UUID, PK)
+├── product_id (VARCHAR)
+├── product_name (VARCHAR)
+├── product_sku (VARCHAR)
+├── barcode (VARCHAR, UNIQUE) ⭐ NUEVO
+├── supplier_id (VARCHAR)
+├── supplier_name (VARCHAR)
+├── brand (VARCHAR) ⭐ NUEVO
+├── category (VARCHAR) ⭐ NUEVO
+├── quantity_available (INTEGER)
+├── unit_cost (NUMERIC) - Precio original
+├── original_price (NUMERIC) ⭐ NUEVO - Precio antes de descuento
+├── total_value (NUMERIC)
+├── stock_status (SMALLINT)
+├── warehouse_location (VARCHAR)
+├── shelf_location (TEXT)
+├── batch_number (VARCHAR)
+├── is_active (BOOLEAN)
+├── is_on_sale (BOOLEAN) ⭐ NUEVO
+├── discount_percent (NUMERIC) ⭐ NUEVO
+├── discount_amount (NUMERIC) ⭐ NUEVO
+├── promotion_code (VARCHAR) ⭐ NUEVO
+├── promotion_description (TEXT) ⭐ NUEVO
+├── promotion_valid_until (DATE) ⭐ NUEVO
+└── created_at (TIMESTAMP)
+```
+
+---
+
+**¿Listo?** Ejecuta `./reset_database.sh` y empieza con la nueva arquitectura 🚀

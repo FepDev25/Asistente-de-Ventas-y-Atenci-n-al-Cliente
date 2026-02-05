@@ -141,9 +141,10 @@ async def create_retriever_agent(
 async def create_sales_agent(
     llm_provider: LLMProvider,
     rag_service: RAGService,
+    product_service: ProductService,
 ) -> SalesAgent:
     """Fabrica el Agente Vendedor (persuasión con LLM)."""
-    return SalesAgent(llm_provider, rag_service)
+    return SalesAgent(llm_provider, rag_service, product_service)
 
 
 async def create_checkout_agent(
