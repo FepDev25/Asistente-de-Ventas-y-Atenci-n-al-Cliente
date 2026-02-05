@@ -132,15 +132,36 @@ class CheckoutAgent(BaseAgent):
         product_info = self._extract_product_from_context(state)
 
         if not product_info:
-            # No hay producto claro, pedir aclaración
-            message = self._format_clarification_message(state)
-            return self._create_response(
-                message=message,
-                state=state,
-                should_transfer=True,
-                transfer_to="sales",
-                error="no_product_identified",
-            )
+            # 🔧 BUGFIX: Si no hay producto en contexto, intentar buscar en el query
+            logger.info("No hay producto en contexto, buscando en el query...")
+            product_name_from_query = self._extract_product_name_from_query(state.user_query)
+            
+            if product_name_from_query:
+                logger.info(f"Producto extraído del query: {product_name_from_query}")
+                # Buscar directamente en BD
+                products = await self.product_service.search_by_name(product_name_from_query)
+                
+                if products:
+                    # Guardar en search_results para próximas interacciones
+                    state.search_results = [
+                        {"name": p.product_name, "price": float(p.unit_cost), "stock": p.quantity_available}
+                        for p in products[:5]
+                    ]
+                    product_info = {"name": products[0].product_name, "quantity": 1}
+                    logger.info(f"Producto encontrado en BD: {product_info['name']}")
+                else:
+                    logger.warning(f"Producto '{product_name_from_query}' no encontrado en BD")
+            
+            # Si aún no hay producto, pedir aclaración
+            if not product_info:
+                message = self._format_clarification_message(state)
+                return self._create_response(
+                    message=message,
+                    state=state,
+                    should_transfer=True,
+                    transfer_to="sales",
+                    error="no_product_identified",
+                )
 
         # Validar stock
         product_name = product_info["name"]
@@ -552,41 +573,124 @@ class CheckoutAgent(BaseAgent):
     ) -> Optional[dict]:
         """
         Extrae información del producto a comprar del contexto.
+        Prioriza el query actual sobre búsquedas antiguas.
         """
-        # Opción 1: Hay un solo resultado de búsqueda
-        if (
-            state.search_results
-            and len(state.search_results) == 1
-        ):
-            return {
-                "name": state.search_results[0]["name"],
-                "quantity": 1,
-            }
-
-        # Opción 2: Usuario mencionó producto en el mensaje
-        # Buscar en los últimos resultados de búsqueda
+        query_lower = state.user_query.lower()
+        
+        # 🔧 BUGFIX: Primero intentar extraer del query actual
+        # Patrones comunes: "comprar Nike Air", "las Nike Zoom", "quiero Adidas"
+        import re
+        
+        # Buscar patrones de marca + modelo en el query
+        brand_patterns = [
+            r'nike\s+[\w\s]+',
+            r'adidas\s+[\w\s]+',
+            r'puma\s+[\w\s]+',
+            r'new\s+balance\s+[\w\s]+'
+        ]
+        
+        for pattern in brand_patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                # Extraer el nombre aproximado del producto
+                product_hint = match.group(0).strip()
+                
+                # Buscar en search_results si coincide
+                if state.search_results:
+                    for result in state.search_results:
+                        product_name_lower = result["name"].lower()
+                        # Verificar si hay suficientes palabras clave coincidentes
+                        hint_words = set(product_hint.split())
+                        product_words = set(product_name_lower.split())
+                        common_words = hint_words & product_words
+                        
+                        # Si hay 2+ palabras en común (ej: "nike" y "zoom")
+                        if len(common_words) >= 2:
+                            logger.info(f"Producto extraído del query: {result['name']}")
+                            return {"name": result["name"], "quantity": 1}
+        
+        # Opción 2: Usuario mencionó producto en el mensaje (búsqueda en resultados)
         if state.search_results:
-            query_lower = state.user_query.lower()
             for result in state.search_results:
                 # Buscar menciones del nombre del producto
                 product_name_lower = result["name"].lower()
-                # Extraer palabras clave del nombre
+                # Extraer palabras clave del nombre (palabras de más de 3 letras)
                 product_keywords = [
                     word
                     for word in product_name_lower.split()
                     if len(word) > 3
                 ]
 
-                if any(keyword in query_lower for keyword in product_keywords):
+                # Si encuentra al menos 2 keywords del producto en el query
+                matches = sum(1 for kw in product_keywords if kw in query_lower)
+                if matches >= 2:
+                    logger.info(f"Producto extraído por keywords: {result['name']}")
                     return {"name": result["name"], "quantity": 1}
 
-        # Opción 3: Tomar el primer resultado si hay búsqueda reciente
-        if state.search_results and len(state.search_results) <= 3:
+        # Opción 3: Hay un solo resultado de búsqueda (fallback)
+        if (
+            state.search_results
+            and len(state.search_results) == 1
+        ):
+            logger.warning(f"Usando único resultado de búsqueda: {state.search_results[0]['name']}")
             return {
                 "name": state.search_results[0]["name"],
                 "quantity": 1,
             }
 
+        # Opción 4: Tomar el primer resultado SOLO si hay búsqueda MUY reciente (última interacción)
+        if state.search_results and len(state.search_results) <= 3:
+            # Verificar que la búsqueda sea reciente (último mensaje del usuario)
+            if state.conversation_history and len(state.conversation_history) > 1:
+                last_user_msg = None
+                for msg in reversed(state.conversation_history):
+                    if msg.get("role") == "user":
+                        last_user_msg = msg.get("content", "")
+                        break
+                
+                # Solo usar primer resultado si el último mensaje fue de búsqueda, no de compra
+                if last_user_msg and not any(kw in last_user_msg.lower() for kw in ["comprar", "quiero", "llevar", "pagar"]):
+                    logger.warning(f"Usando primer resultado de búsqueda reciente: {state.search_results[0]['name']}")
+                    return {
+                        "name": state.search_results[0]["name"],
+                        "quantity": 1,
+                    }
+
+        logger.warning("No se pudo extraer producto del contexto")
+        return None
+
+    def _extract_product_name_from_query(self, query: str) -> Optional[str]:
+        """
+        Extrae nombre de producto directamente del query cuando no hay search_results.
+        Ej: "quiero comprar Adidas Ultraboost" -> "Adidas Ultraboost"
+        """
+        import re
+        query_lower = query.lower()
+        
+        # Patrones de marcas conocidas seguidas de modelo
+        patterns = [
+            r'(nike\s+[\w\s]+?)(?:\s+por|$|,|\.|quiero|comprar|llevar)',
+            r'(adidas\s+[\w\s]+?)(?:\s+por|$|,|\.|quiero|comprar|llevar)',
+            r'(puma\s+[\w\s]+?)(?:\s+por|$|,|\.|quiero|comprar|llevar)',
+            r'(new\s+balance\s+[\w\s]+?)(?:\s+por|$|,|\.|quiero|comprar|llevar)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query_lower, re.IGNORECASE)
+            if match:
+                product_name = match.group(1).strip()
+                # Limpiar palabras comunes al final
+                product_name = re.sub(r'\s+(esas|esos|ese|esa|por|favor|porfavor)$', '', product_name, flags=re.IGNORECASE)
+                logger.info(f"📝 Producto extraído con regex: '{product_name}'")
+                return product_name
+        
+        # Fallback: buscar solo marca si no encontró modelo
+        brands = ['nike', 'adidas', 'puma', 'new balance']
+        for brand in brands:
+            if brand in query_lower:
+                logger.info(f"📝 Solo marca encontrada: '{brand}'")
+                return brand
+        
         return None
 
     def _format_confirmation_request(

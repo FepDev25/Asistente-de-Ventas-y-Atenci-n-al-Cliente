@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 import { chatService, ragService, authService } from '../services/graphqlservices';
+import { guionService } from '../services/guionService';
 import { useOrderCreation } from '../services/userordercreation';
 import type { SemanticSearchResult, RAGDoc } from '../services/graphqlservices';
 import './chatbot.css';
@@ -79,6 +80,15 @@ const ChatBot: React.FC = () => {
   }>({
     active: false,
     step: null
+  });
+
+  // Estados para el flujo de Guion (Agente 2 → Agente 3)
+  const [guionFlow, setGuionFlow] = useState<{
+    active: boolean;
+    mejorOpcionId?: string;
+    sessionId?: string;
+  }>({
+    active: false
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -194,6 +204,304 @@ const ChatBot: React.FC = () => {
     return checkoutKeywords.some(keyword => 
       userMessage.toLowerCase().includes(keyword)
     );
+  };
+
+  /**
+   * NUEVA FUNCIÓN: Detecta si el usuario menciona productos de la BD
+   * Busca nombres de productos conocidos (Adidas, Nike, etc.)
+   */
+  const detectProductMentions = (userMessage: string): Array<{
+    barcode: string; 
+    nombre: string; 
+    prioridad: 'alta' | 'media' | 'baja';
+    motivoSeleccion: string;
+  }> => {
+    const message = userMessage.toLowerCase();
+    const detectedProducts: Array<{
+      barcode: string; 
+      nombre: string; 
+      prioridad: 'alta' | 'media' | 'baja';
+      motivoSeleccion: string;
+    }> = [];
+
+    // Base de productos conocidos (según init_db_2.py)
+    const productDatabase = [
+      { 
+        barcode: '7501234567891', 
+        nombre: 'Nike Air Max 90', 
+        keywords: ['air max', 'airmax', 'air max 90'],
+        descripcion: 'Zapatilla clásica, buen precio'
+      },
+      { 
+        barcode: '7501234567895', 
+        nombre: 'Nike Air Force 1 \'07', 
+        keywords: ['air force', 'airforce', 'force 1'],
+        descripcion: 'Muy popular, estilo icónico'
+      },
+      { 
+        barcode: '7501234567894', 
+        nombre: 'Nike Court Vision Low', 
+        keywords: ['court vision', 'courtvision'],
+        descripcion: 'Alternativa económica con descuento'
+      },
+      { 
+        barcode: '8806098934474', 
+        nombre: 'Adidas Ultraboost Light', 
+        keywords: ['ultraboost', 'ultra boost'],
+        descripcion: 'Máximo confort para correr'
+      },
+      { 
+        barcode: '8806098934475', 
+        nombre: 'Adidas Supernova 3', 
+        keywords: ['supernova'],
+        descripcion: 'Excelente relación calidad-precio'
+      },
+      { 
+        barcode: '8806098934478', 
+        nombre: 'Adidas Samba OG', 
+        keywords: ['samba'],
+        descripcion: 'Estilo casual versátil'
+      },
+      { 
+        barcode: '7501234567890', 
+        nombre: 'Nike Air Zoom Pegasus 40', 
+        keywords: ['pegasus', 'zoom pegasus'],
+        descripcion: 'Ideal para entrenamientos'
+      },
+      { 
+        barcode: '7501234567893', 
+        nombre: 'Nike ZoomX Vaporfly 3', 
+        keywords: ['vaporfly', 'zoomx'],
+        descripcion: 'Alto rendimiento para competencias'
+      },
+    ];
+
+    productDatabase.forEach((product, index) => {
+      const isMainProduct = product.keywords.some(kw => message.includes(kw));
+      if (isMainProduct) {
+        // Asignar prioridad según orden de aparición y mención explícita
+        let prioridad: 'alta' | 'media' | 'baja';
+        if (detectedProducts.length === 0) {
+          prioridad = 'alta'; // Primer producto mencionado
+        } else if (detectedProducts.length === 1) {
+          prioridad = 'media'; // Segundo producto
+        } else {
+          prioridad = 'baja'; // Tercer producto o más
+        }
+
+        detectedProducts.push({
+          barcode: product.barcode,
+          nombre: product.nombre,
+          prioridad: prioridad,
+          motivoSeleccion: product.descripcion
+        });
+      }
+    });
+
+    return detectedProducts;
+  };
+
+  /**
+   * NUEVA FUNCIÓN: Detecta intención de comparación/recomendación
+   */
+  const detectComparisonIntent = (userMessage: string): boolean => {
+    const comparisonKeywords = [
+      'cual es mejor', 'cual me recomiendas', 'comparar', 'diferencia',
+      'cual elegir', 'que me aconsejas', 'recomienda', 'recomendacion',
+      'mejor opcion', 'cual compro'
+    ];
+    
+    return comparisonKeywords.some(keyword => 
+      userMessage.toLowerCase().includes(keyword)
+    );
+  };
+
+  /**
+   * 🆕 NUEVA FUNCIÓN: Extrae preferencias del mensaje del usuario
+   */
+  const extractPreferences = (userMessage: string) => {
+    const message = userMessage.toLowerCase();
+    const preferences: any = {
+      estiloComunicacion: 'neutral',
+      buscaOfertas: true,
+      urgencia: 'media'
+    };
+
+    // Extraer presupuesto
+    const budgetMatch = message.match(/\$(\d+)/); // Busca $150, $200, etc.
+    if (budgetMatch) {
+      preferences.presupuestoMaximo = parseInt(budgetMatch[1]);
+    }
+
+    // Extraer uso previsto
+    if (message.includes('regalo')) {
+      const giftContext = message.match(/regalo para ([\w\s]+?)(?:,|\.|$)/i);
+      preferences.usoPrevisto = giftContext ? `Regalo para ${giftContext[1].trim()}` : 'Regalo';
+    } else if (message.includes('correr') || message.includes('running')) {
+      preferences.usoPrevisto = 'Running/Entrenamiento';
+    } else if (message.includes('casual') || message.includes('diario')) {
+      preferences.usoPrevisto = 'Uso casual diario';
+    } else if (message.includes('competencia') || message.includes('maratón')) {
+      preferences.usoPrevisto = 'Competencias/Maratón';
+    }
+
+    // Extraer urgencia
+    if (message.includes('urgente') || message.includes('rápido') || message.includes('ya')) {
+      preferences.urgencia = 'alta';
+    } else if (message.includes('sin prisa') || message.includes('cuando sea')) {
+      preferences.urgencia = 'baja';
+    }
+
+    // Detectar si busca ofertas
+    if (message.includes('oferta') || message.includes('descuento') || message.includes('promo') || message.includes('barato')) {
+      preferences.buscaOfertas = true;
+    }
+
+    return preferences;
+  };
+
+  /**
+   *  NUEVA FUNCIÓN: Maneja el flujo de guion (procesarGuionAgente2)
+   */
+  const handleGuionFlow = async (
+    userMessage: string, 
+    detectedProducts: Array<{barcode: string; nombre: string; prioridad: 'alta' | 'media' | 'baja'; motivoSeleccion: string}>
+  ) => {
+    setIsTyping(true);
+    
+    try {
+      console.log(' Iniciando flujo de guion con productos:', detectedProducts);
+
+      // Extraer preferencias del mensaje
+      const preferences = extractPreferences(userMessage);
+      console.log(' Preferencias extraídas:', preferences);
+
+      // Crear el guion con los productos detectados y preferencias
+      const guion = guionService.crearGuionSimple(userMessage, detectedProducts, preferences);
+      
+      // Llamar al endpoint de Felipe
+      const response = await guionService.procesarGuionAgente2(guion);
+
+      if (!response) {
+        addMessage(
+          ' No pude procesar tu solicitud. Intenta de nuevo.',
+          'bot'
+        );
+        setIsTyping(false);
+        return;
+      }
+
+      console.log(' Respuesta del guion:', response);
+
+      // Activar flujo de guion
+      setGuionFlow({
+        active: true,
+        mejorOpcionId: response.mejorOpcionId,
+        sessionId: guion.sessionId
+      });
+
+      // Formatear mensaje con los productos recomendados
+      let mensaje = `${response.mensaje}\n\n`;
+      
+      if (response.productos && response.productos.length > 0) {
+        mensaje += '**Productos comparados:**\n\n';
+        response.productos.forEach((prod, idx) => {
+          const emoji = prod.id === response.mejorOpcionId ? '⭐' : '•';
+          mensaje += `${emoji} **${prod.productName}**\n`;
+          mensaje += `   Precio: $${prod.finalPrice}`;
+          if (prod.isOnSale) {
+            mensaje += ` ~~$${prod.unitCost}~~ (${prod.discountPercent}% OFF)`;
+          }
+          mensaje += `\n   Score: ${prod.recommendationScore}/100\n`;
+          mensaje += `   ${prod.reason}\n\n`;
+        });
+      }
+
+      if (response.siguientePaso === 'confirmar_compra') {
+        mensaje += '\n¿Te interesa este producto? Responde **"sí"** o **"no"**.';
+      }
+
+      addMessage(mensaje, 'bot');
+      setIsTyping(false);
+
+    } catch (error) {
+      console.error('❌ Error en handleGuionFlow:', error);
+      addMessage(
+        '❌ Hubo un error procesando tu solicitud. Por favor, intenta de nuevo.',
+        'bot'
+      );
+      setIsTyping(false);
+    }
+  };
+
+  /**
+   * NUEVA FUNCIÓN: Maneja la conversación del guion (continuarConversacion)
+   */
+  const handleGuionConversation = async (userMessage: string) => {
+    setIsTyping(true);
+
+    try {
+      console.log('💬 Continuando conversación de guion:', userMessage);
+      console.log('📋 Session ID:', guionFlow.sessionId);
+
+      const response = await guionService.continuarConversacion(
+        userMessage,
+        guionFlow.sessionId
+      );
+
+      if (!response) {
+        console.error('❌ Response is null or undefined');
+        addMessage(
+          '❌ No pude procesar tu respuesta. Por favor, intenta de nuevo.',
+          'bot'
+        );
+        setIsTyping(false);
+        return;
+      }
+
+      console.log('📥 Respuesta de continuación:', response);
+
+      // Mostrar mensaje del bot
+      let mensaje = response.mensaje;
+
+      if (response.siguientePaso === 'solicitar_datos_envio') {
+        mensaje += '\n\n📍 Por favor, indícame:\n- Talla\n- Dirección de envío';
+        
+      } else if (response.siguientePaso === 'ir_a_checkout') {
+        mensaje += '\n\n✅ ¡Listo para procesar tu compra!';
+        // Desactivar flujo de guion
+        setGuionFlow({ active: false });
+        
+      } else if (response.siguientePaso === 'nueva_conversacion') {
+        // Sin más opciones
+        setGuionFlow({ active: false });
+        
+      } else if (response.siguientePaso === 'confirmar_compra') {
+        // Hay alternativa
+        mensaje += '\n\n¿Te interesa esta opción? Responde **"sí"** o **"no"**.';
+        setGuionFlow(prev => ({ 
+          ...prev, 
+          mejorOpcionId: response.mejorOpcionId 
+        }));
+      }
+
+      addMessage(mensaje, 'bot');
+      setIsTyping(false);
+
+    } catch (error) {
+      console.error('❌ Error en handleGuionConversation:', error);
+      // Mostrar el error completo para debugging
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('Error details:', errorMsg);
+      
+      addMessage(
+        '❌ Hubo un error procesando tu respuesta. Por favor, intenta de nuevo.\n\n' +
+        `Detalles técnicos: ${errorMsg}`,
+        'bot'
+      );
+      setIsTyping(false);
+      setGuionFlow({ active: false });
+    }
   };
 
   const handleCheckoutFlow = async (userMessage: string) => {
@@ -356,6 +664,13 @@ const ChatBot: React.FC = () => {
       );
     }, 300);
 
+    // 🆕 FLUJO DE GUION: Si hay guion activo, continuar conversación
+    if (guionFlow.active) {
+      setIsTyping(false);
+      await handleGuionConversation(text);
+      return;
+    }
+
     // Detectar intención de checkout
     const isCheckoutIntent = detectCheckoutIntent(text);
     
@@ -363,6 +678,17 @@ const ChatBot: React.FC = () => {
     if (checkoutFlow.active || (isCheckoutIntent && cart.length > 0)) {
       setIsTyping(false);
       await handleCheckoutFlow(text);
+      return;
+    }
+
+    // 🆕 DETECTAR PRODUCTOS Y USAR GUION SERVICE
+    const detectedProducts = detectProductMentions(text);
+    
+    // Si detecta productos, usar flujo de guion (sin requerir palabras de comparación)
+    if (detectedProducts.length > 0) {
+      console.log(`🎯 Detectados ${detectedProducts.length} productos → Activando flujo de guion`);
+      setIsTyping(false);
+      await handleGuionFlow(text, detectedProducts);
       return;
     }
 
@@ -469,6 +795,7 @@ const ChatBot: React.FC = () => {
 
   const handleNewConversation = () => {
     chatService.resetSession();
+    guionService.resetSession();
     setMessages([
       {
         id: Date.now().toString(),
@@ -479,6 +806,7 @@ const ChatBot: React.FC = () => {
       }
     ]);
     setCheckoutFlow({ active: false, step: null });
+    setGuionFlow({ active: false });
     resetOrderState();
   };
 

@@ -262,6 +262,15 @@ class AuthResponse:
     error: Optional[str] = None
 
 
+@strawberry.type
+class ContinuarConversacionResponse:
+    """Respuesta de continuar conversación del guion."""
+    success: bool
+    mensaje: str
+    mejor_opcion_id: Optional[UUID] = None
+    siguiente_paso: str  # confirmar_compra, solicitar_datos_envio, ir_a_checkout, nueva_conversacion
+
+
 # ============================================================================
 # INPUTS PARA MUTATIONS
 # ============================================================================
