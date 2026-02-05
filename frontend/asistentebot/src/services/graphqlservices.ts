@@ -35,6 +35,7 @@ export interface Product {
   warehouseLocation: string;
   shelfLocation?: string;
   batchNumber?: string;
+  barcode?: string;
 }
 
 export interface Order {
@@ -160,6 +161,7 @@ export class ProductService {
           warehouseLocation
           shelfLocation
           batchNumber
+          barcode
         }
       }
     `;

@@ -37,7 +37,8 @@ const Store: React.FC = () => {
         stockStatus: p.stockStatus,
         warehouseLocation: p.warehouseLocation,
         shelfLocation: p.shelfLocation || '',
-        batchNumber: p.batchNumber || ''
+        batchNumber: p.batchNumber || '',
+        barcode: p.barcode
       }));
 
       setProducts(transformedProducts);

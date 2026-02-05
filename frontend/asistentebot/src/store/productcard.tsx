@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import type { Product } from '../services/graphqlservices';
 import { FiShoppingCart, FiMapPin, FiPackage } from 'react-icons/fi';
+import { getProductImageUrl } from '../utils/productImages';
 
 interface ProductCardProps {
   product: Product;
@@ -44,7 +45,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart, index }
       <div className="product-image-container">
         {!imageError ? (
           <img
-            src={`https://picsum.photos/seed/${product.id}/400/300`}
+            src={getProductImageUrl(product.barcode, product.id)}
             alt={product.productName}
             className="product-image"
             onError={() => setImageError(true)}
