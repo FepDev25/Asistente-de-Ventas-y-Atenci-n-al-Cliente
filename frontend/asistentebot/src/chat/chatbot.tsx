@@ -107,10 +107,7 @@ const ChatBot: React.FC = () => {
 
   // Quick actions para sugerencias rápidas
   const quickActions: QuickAction[] = [
-    { id: '1', label: '📦 Ver productos', message: 'Muéstrame los productos disponibles' },
-    { id: '2', label: '🎯 Recomendaciones', message: 'Dame recomendaciones personalizadas' },
-    { id: '3', label: '🛒 Ver carrito', message: 'Muéstrame mi carrito' },
-    { id: '4', label: '💳 Finalizar compra', message: 'Quiero finalizar mi compra' }
+    { id: '1', label: '📦 Ver productos', message: 'list_products_action' } // Acción especial
   ];
 
   const scrollToBottom = () => {
@@ -746,26 +743,57 @@ const ChatBot: React.FC = () => {
     }
   };
 
-  const handleQuickAction = (action: QuickAction) => {
-    if (action.label.includes('carrito')) {
-      setShowCart(true);
-      if (cart.length > 0) {
+  const handleQuickAction = async (action: QuickAction) => {
+    // Acción especial: Ver productos (consume endpoint directamente)
+    if (action.message === 'list_products_action') {
+      setIsTyping(true);
+
+      try {
+        // Importar productService
+        const { productService } = await import('../services/graphqlservices');
+
+        // Llamar al endpoint listProducts
+        const products = await productService.listProducts(20);
+
+        if (!products || products.length === 0) {
+          addMessage(
+            '❌ **No hay productos disponibles**\n\nNo se encontraron productos en el inventario.',
+            'bot'
+          );
+          setIsTyping(false);
+          return;
+        }
+
+        // Formatear la lista de productos
+        let mensaje = `📦 **Productos Disponibles** (${products.length})\n\n`;
+
+        products.forEach((product, index) => {
+          const stockIcon = product.quantityAvailable > 10 ? '✅' : product.quantityAvailable > 0 ? '⚠️' : '❌';
+          mensaje += `${index + 1}. **${product.productName}**\n`;
+          mensaje += `   💰 Precio: $${product.unitCost}\n`;
+          mensaje += `   ${stockIcon} Stock: ${product.quantityAvailable} unidades\n`;
+          mensaje += `   📍 Ubicación: ${product.warehouseLocation}\n`;
+          if (product.shelfLocation) {
+            mensaje += `   🗄️ Estante: ${product.shelfLocation}\n`;
+          }
+          mensaje += '\n';
+        });
+
+        mensaje += '¿Te interesa alguno de estos productos? ¡Pregúntame sobre ellos!';
+
+        addMessage(mensaje, 'bot');
+        setIsTyping(false);
+
+      } catch (error) {
+        console.error('Error al cargar productos:', error);
         addMessage(
-          `🛒 **Tu carrito**\n\n` +
-          cart.map(item => `• ${item.product_name} x${item.quantity} - $${(item.unit_price * item.quantity).toFixed(2)}`).join('\n') +
-          `\n\n**Total:** $${cartTotal.toFixed(2)}`,
+          '❌ **Error al cargar productos**\n\nHubo un problema al consultar el inventario. Por favor, intenta de nuevo.',
           'bot'
         );
-      } else {
-        addMessage('Tu carrito está vacío. ¡Agrega algunos productos!', 'bot');
-      }
-    } else if (action.label.includes('Finalizar compra')) {
-      if (cart.length > 0) {
-        handleCheckoutFlow('quiero finalizar mi compra');
-      } else {
-        addMessage('❌ Tu carrito está vacío. Agrega productos primero.', 'bot');
+        setIsTyping(false);
       }
     } else {
+      // Otras acciones (si las agregas en el futuro)
       handleSendMessage(action.message);
     }
   };
