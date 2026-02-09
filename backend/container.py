@@ -25,7 +25,6 @@ from backend.services.user_service import UserService
 from backend.config.redis_config import RedisSettings, get_redis_settings
 from backend.agents.retriever_agent import RetrieverAgent
 from backend.agents.sales_agent import SalesAgent
-from backend.agents.checkout_agent import CheckoutAgent
 from backend.agents.orchestrator import AgentOrchestrator
 
 import redis.asyncio as redis
@@ -147,18 +146,9 @@ async def create_sales_agent(
     return SalesAgent(llm_provider, rag_service, product_service)
 
 
-async def create_checkout_agent(
-    product_service: ProductService,
-    order_service: OrderService,
-) -> CheckoutAgent:
-    """Fabrica el Agente Cajero (checkout con lógica dura)."""
-    return CheckoutAgent(product_service, order_service)
-
-
 async def create_orchestrator(
     retriever_agent: RetrieverAgent,
     sales_agent: SalesAgent,
-    checkout_agent: CheckoutAgent,
     llm_provider: LLMProvider,
 ) -> AgentOrchestrator:
     """
@@ -169,7 +159,6 @@ async def create_orchestrator(
     return AgentOrchestrator(
         retriever_agent,
         sales_agent,
-        checkout_agent,
         llm_provider,
         use_llm_detection=True,  # Detección inteligente habilitada
     )
@@ -199,7 +188,6 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     # 4. Sistema Multi-Agente
     providers_list.append(aioinject.Singleton(create_retriever_agent))
     providers_list.append(aioinject.Singleton(create_sales_agent))
-    providers_list.append(aioinject.Singleton(create_checkout_agent))
     providers_list.append(aioinject.Singleton(create_orchestrator))
 
     return providers_list

@@ -10,7 +10,6 @@ from backend.config.logging_config import get_logger
 from backend.agents.base import BaseAgent
 from backend.agents.retriever_agent import RetrieverAgent
 from backend.agents.sales_agent import SalesAgent
-from backend.agents.checkout_agent import CheckoutAgent
 from backend.domain.agent_schemas import (
     AgentState,
     AgentResponse,
@@ -36,14 +35,12 @@ class AgentOrchestrator:
         self,
         retriever_agent: RetrieverAgent,
         sales_agent: SalesAgent,
-        checkout_agent: CheckoutAgent,
         llm_provider: LLMProvider,
         use_llm_detection: bool = True,  # ✨ NUEVO: Usar LLM para detección
     ):
         self.agents: Dict[str, BaseAgent] = {
             "retriever": retriever_agent,
             "sales": sales_agent,
-            "checkout": checkout_agent,
         }
         self.llm_provider = llm_provider
         self.use_llm_detection = use_llm_detection
@@ -171,14 +168,7 @@ class AgentOrchestrator:
                     )
                     current_agent_name = "sales"
                     state.detected_intent = "persuasion"
-            else:
-                # Si está en checkout, usar CheckoutAgent
-                current_agent_name = "checkout"
-                log.info(
-                    "checkout_flow_active",
-                    agent="checkout",
-                    stage=state.checkout_stage
-                )
+            # Note: Checkout flow removed - frontend uses direct GraphQL createOrder
 
             # Validar que el agente existe
             if current_agent_name not in self.agents:
