@@ -28,8 +28,8 @@ class SearchService:
     Ahora delega al sistema multi-agente:
     - RetrieverAgent: Búsqueda SQL rápida
     - SalesAgent: Persuasión con LLM (Alex)
-    - CheckoutAgent: Cierre de pedidos
 
+    Checkout se maneja vía GraphQL createOrder (frontend directo).
     Mantiene sesiones de usuario para conversaciones continuas usando Redis.
     """
 

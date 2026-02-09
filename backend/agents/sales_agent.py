@@ -32,8 +32,8 @@ class SalesAgent(BaseAgent):
        - Stock disponible
        - Preferencias del usuario
     4. Genera recomendación persuasiva personalizada
-    5. Cierra venta transfiriendo a CheckoutAgent
-    
+    5. El checkout se maneja vía GraphQL createOrder (frontend)
+
     Ya NO hay restricción de 40-50 palabras.
     El agente puede dar respuestas completas y detalladas.
     """
