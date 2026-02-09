@@ -270,6 +270,12 @@ class ContinuarConversacionResponse:
     mejor_opcion_id: Optional[UUID] = None
     siguiente_paso: str  # confirmar_compra, solicitar_datos_envio, ir_a_checkout, nueva_conversacion
 
+    # Información de orden creada (cuando se completa el checkout)
+    order_id: Optional[UUID] = None
+    order_number: Optional[str] = None
+    order_total: Optional[Decimal] = None
+    order_status: Optional[str] = None
+
 
 # ============================================================================
 # INPUTS PARA MUTATIONS

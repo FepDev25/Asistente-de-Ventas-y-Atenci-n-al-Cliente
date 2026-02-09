@@ -11,6 +11,7 @@ from aioinject import Inject
 from aioinject.ext.strawberry import inject
 from loguru import logger
 from strawberry.types import Info
+from sqlalchemy import select
 
 from backend.config.security import securityJWT
 from backend.api.graphql.queries import get_current_user
@@ -534,6 +535,8 @@ class BusinessMutation:
         info: Info,
         session_id: str,
         respuesta_usuario: str,
+        order_service: Annotated[OrderService, Inject],
+        product_service: Annotated[ProductService, Inject],
     ) -> ContinuarConversacionResponse:
         """
         Continúa el flujo de conversación después de procesarGuionAgente2.
@@ -683,27 +686,139 @@ class BusinessMutation:
             
             # Si contiene datos de envío (talla + dirección)
             else:
-                logger.info(f"Procesando datos de envío. Session: {session_id}")
-                
-                # Extraer talla y dirección (simplificado)
-                session_data['shipping_info'] = respuesta_usuario
-                session_data['ready_for_checkout'] = True
-                
-                redis_client_update = redis.from_url(
-                    redis_settings.get_redis_url(),
-                    encoding="utf-8",
-                    decode_responses=True,
-                    socket_connect_timeout=5
-                )
-                await redis_client_update.setex(session_key, 1800, json.dumps(session_data))
-                await redis_client_update.close()
-                
-                return ContinuarConversacionResponse(
-                    success=True,
-                    mensaje="¡Hola, mi estimado/a! ¡Qué bacán que te gustaron esas Nike Air Max 90! 😄\n\nYa tengo aquí sus datos confirmados: son las **Nike Air Max 90 en talla 42**, y la dirección de envío que me proporcionó es **Av. Américas 123**.\n\n¡Todo está listo por nuestra parte! Ahora sí, lo siguiente es pasarle a caja para que pueda completar su compra de forma segura y rápida.\n\n¡Gracias por confiar en nosotros! ¡Que tenga un excelente día!",
-                    mejor_opcion_id=session_data.get('mejor_opcion_id'),
-                    siguiente_paso="ir_a_checkout"
-                )
+                logger.info(f"Procesando datos de envío y creando orden. Session: {session_id}")
+
+                # Extraer talla y dirección del texto del usuario
+                import re
+                respuesta_texto = respuesta_usuario.strip()
+
+                # Buscar talla (números entre 35-50 típicamente)
+                talla_match = re.search(r'\b(3[5-9]|4[0-9]|50)\b', respuesta_texto)
+                talla = talla_match.group(1) if talla_match else "Sin especificar"
+
+                # La dirección es todo el texto (simplificado)
+                # En producción podrías usar un LLM para extraer mejor
+                direccion = respuesta_texto
+
+                # Guardar en sesión
+                session_data['shipping_info'] = {
+                    'talla': talla,
+                    'direccion': direccion,
+                    'texto_completo': respuesta_usuario
+                }
+
+                # Obtener el producto seleccionado
+                mejor_opcion_id = session_data.get('mejor_opcion_id')
+                if not mejor_opcion_id:
+                    return ContinuarConversacionResponse(
+                        success=False,
+                        mensaje="No se encontró el producto seleccionado. Por favor, comienza de nuevo.",
+                        siguiente_paso="nueva_conversacion"
+                    )
+
+                try:
+                    # Obtener detalles del producto
+                    from backend.database.models import ProductStock
+                    async with product_service.session_factory() as db_session:
+                        result = await db_session.execute(
+                            select(ProductStock).where(ProductStock.id == UUID(mejor_opcion_id))
+                        )
+                        product_obj = result.scalar_one_or_none()
+
+                    if not product_obj:
+                        return ContinuarConversacionResponse(
+                            success=False,
+                            mensaje="Producto no encontrado. Por favor, intenta de nuevo.",
+                            siguiente_paso="nueva_conversacion"
+                        )
+
+                    # Crear la orden en la base de datos
+                    order_data = OrderCreate(
+                        user_id=UUID(current_user["id"]),
+                        details=[
+                            OrderDetailCreate(
+                                product_id=UUID(mejor_opcion_id),
+                                quantity=1
+                            )
+                        ],
+                        shipping_address=direccion,
+                        notes=f"Talla solicitada: {talla}",
+                        session_id=session_id
+                    )
+
+                    order, order_message = await order_service.create_order(order_data)
+
+                    # Generar número de orden legible (basado en ID)
+                    order_number = f"ORD-{str(order.id)[:8].upper()}"
+
+                    # Actualizar sesión con orden creada
+                    session_data['order_created'] = True
+                    session_data['order_id'] = str(order.id)
+                    session_data['order_number'] = order_number
+
+                    redis_client_update = redis.from_url(
+                        redis_settings.get_redis_url(),
+                        encoding="utf-8",
+                        decode_responses=True,
+                        socket_connect_timeout=5
+                    )
+                    await redis_client_update.setex(session_key, 1800, json.dumps(session_data))
+                    await redis_client_update.close()
+
+                    # Mensaje de confirmación con información de la orden
+                    producto_nombre = product_obj.product_name
+                    mensaje = f"¡Excelente! 🎉\n\n"
+                    mensaje += f"**Tu orden ha sido creada exitosamente:**\n\n"
+                    mensaje += f"📦 **Número de Orden:** {order_number}\n"
+                    mensaje += f"👟 **Producto:** {producto_nombre}\n"
+                    mensaje += f"📏 **Talla:** {talla}\n"
+                    mensaje += f"📍 **Dirección de envío:** {direccion}\n"
+                    mensaje += f"💰 **Total:** ${float(order.total_amount):.2f}\n"
+                    mensaje += f"📊 **Estado:** {order.status}\n\n"
+                    mensaje += f"¡Gracias por tu compra! Tu pedido está siendo procesado. 🚀"
+
+                    return ContinuarConversacionResponse(
+                        success=True,
+                        mensaje=mensaje,
+                        mejor_opcion_id=UUID(mejor_opcion_id),
+                        siguiente_paso="orden_completada",
+                        order_id=order.id,
+                        order_number=order_number,
+                        order_total=order.total_amount,
+                        order_status=order.status
+                    )
+
+                except InsufficientStockError as e:
+                    logger.warning(f"Stock insuficiente al crear orden: {e}")
+                    return ContinuarConversacionResponse(
+                        success=False,
+                        mensaje=f"Lo siento, no hay stock suficiente para este producto. 😔\n\n{str(e)}",
+                        siguiente_paso="nueva_conversacion"
+                    )
+
+                except ProductNotFoundError as e:
+                    logger.error(f"Producto no encontrado al crear orden: {e}")
+                    return ContinuarConversacionResponse(
+                        success=False,
+                        mensaje="No se encontró el producto seleccionado. Por favor, intenta de nuevo.",
+                        siguiente_paso="nueva_conversacion"
+                    )
+
+                except OrderServiceError as e:
+                    logger.error(f"Error al crear orden: {e}")
+                    return ContinuarConversacionResponse(
+                        success=False,
+                        mensaje=f"Hubo un problema al crear tu orden: {str(e)}",
+                        siguiente_paso="reintentar"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error inesperado al crear orden: {e}", exc_info=True)
+                    return ContinuarConversacionResponse(
+                        success=False,
+                        mensaje="Hubo un problema al procesar tu orden. Por favor, intenta de nuevo.",
+                        siguiente_paso="reintentar"
+                    )
         
         except Exception as e:
             logger.error(f"Error en continuar_conversacion: {e}", exc_info=True)
