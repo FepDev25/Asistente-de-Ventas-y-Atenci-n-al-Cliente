@@ -145,12 +145,23 @@ class OrderService:
                         
                         result = await session.execute(product_query)
                         product = result.scalar_one_or_none()
-                        
+
                         if not product:
                             raise ProductNotFoundError(
                                 f"Producto no encontrado: {item.product_id}"
                             )
-                        
+
+                        # LOG: Stock ANTES de crear orden
+                        stock_antes = product.quantity_available
+                        self.logger.info(
+                            f"📦 [STOCK ANTES DE ORDEN]\n"
+                            f"   • Producto: {product.product_name}\n"
+                            f"   • ID: {product.id}\n"
+                            f"   • Stock disponible: {stock_antes} unidades\n"
+                            f"   • Precio unitario: ${float(product.final_price):.2f}\n"
+                            f"   • Cantidad solicitada: {item.quantity}"
+                        )
+
                         # Validar stock
                         if product.quantity_available < item.quantity:
                             raise InsufficientStockError(
@@ -158,17 +169,28 @@ class OrderService:
                                 f"Disponible: {product.quantity_available}, "
                                 f"Solicitado: {item.quantity}"
                             )
-                        
+
                         # Bloquear stock (descontar)
                         product.quantity_available -= item.quantity
+
+                        # LOG: Stock DESPUÉS de descontar
+                        stock_despues = product.quantity_available
+                        self.logger.info(
+                            f"✅ [STOCK DESCONTADO]\n"
+                            f"   • Producto: {product.product_name}\n"
+                            f"   • Stock anterior: {stock_antes} unidades\n"
+                            f"   • Descontado: {item.quantity} unidades\n"
+                            f"   • Stock restante: {stock_despues} unidades\n"
+                            f"   • Diferencia: {stock_antes - stock_despues}"
+                        )
                         
-                        # Crear detalle del pedido
+                        # Crear detalle del pedido (usar final_price que incluye descuentos)
                         detail = OrderDetail(
                             product_id=product.id,
                             product_name=product.product_name,
                             product_sku=product.product_sku,
                             quantity=item.quantity,
-                            unit_price=product.unit_cost,
+                            unit_price=product.final_price,  # ← Usar precio con descuento
                         )
                         order_details.append(detail)
                         locked_products.append(product)
@@ -209,18 +231,59 @@ class OrderService:
                     # Guardar en BD
                     session.add(order)
                     await session.flush()  # Genera el ID sin hacer commit
-                    
+
                     # Refrescar para cargar relaciones
                     await session.refresh(order, attribute_names=["details"])
-                    
+
                 # Commit automático al salir del contexto
-                
+
+                # LOG: Orden completa creada
                 self.logger.info(
-                    "Order created successfully",
-                    order_id=order.id,
-                    total=order.total_amount,
-                    item_count=len(order.details)
+                    f"🛒 [ORDEN CREADA EXITOSAMENTE]\n"
+                    f"   • ID de Orden: {order.id}\n"
+                    f"   • Usuario: {order.user_id}\n"
+                    f"   • Estado: {order.status}\n"
+                    f"   • Estado de pago: {order.payment_status}\n"
+                    f"   • Cantidad de items: {len(order.details)}\n"
+                    f"   • Session ID: {order.session_id or 'N/A'}"
                 )
+                self.logger.info(
+                    f"💰 [TOTALES DE ORDEN]\n"
+                    f"   • Subtotal: ${float(order.subtotal):.2f}\n"
+                    f"   • Impuestos: ${float(order.tax_amount):.2f}\n"
+                    f"   • Costo de envío: ${float(order.shipping_cost):.2f}\n"
+                    f"   • Descuentos: ${float(order.discount_amount):.2f}\n"
+                    f"   • TOTAL A PAGAR: ${float(order.total_amount):.2f}"
+                )
+                self.logger.info(
+                    f"📍 [INFORMACIÓN DE ENVÍO]\n"
+                    f"   • Dirección: {order.shipping_address}\n"
+                    f"   • Ciudad: {order.shipping_city or 'N/A'}\n"
+                    f"   • Estado/Provincia: {order.shipping_state or 'N/A'}\n"
+                    f"   • País: {order.shipping_country or 'N/A'}\n"
+                    f"   • Código postal: {order.shipping_zip or 'N/A'}"
+                )
+                if order.contact_name or order.contact_phone or order.contact_email:
+                    self.logger.info(
+                        f"📞 [INFORMACIÓN DE CONTACTO]\n"
+                        f"   • Nombre: {order.contact_name or 'N/A'}\n"
+                        f"   • Teléfono: {order.contact_phone or 'N/A'}\n"
+                        f"   • Email: {order.contact_email or 'N/A'}"
+                    )
+                if order.notes:
+                    self.logger.info(f"📝 [NOTAS DEL CLIENTE] {order.notes}")
+
+                # LOG: Detalles de items en la orden
+                self.logger.info(f"📋 [ITEMS DE LA ORDEN] ({len(order.details)} items)")
+                for idx, detail in enumerate(order.details, 1):
+                    self.logger.info(
+                        f"   [{idx}] {detail.product_name}\n"
+                        f"       • ID Producto: {detail.product_id}\n"
+                        f"       • SKU: {detail.product_sku}\n"
+                        f"       • Cantidad: {detail.quantity}\n"
+                        f"       • Precio unitario: ${float(detail.unit_price):.2f}\n"
+                        f"       • Subtotal: ${float(detail.subtotal):.2f}"
+                    )
                 
                 message = (
                     f"Pedido #{str(order.id)[:8]} creado exitosamente. "
