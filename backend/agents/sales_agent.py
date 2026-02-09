@@ -281,14 +281,35 @@ class SalesAgent(BaseAgent):
             SystemMessage(content=system_prompt),
             HumanMessage(content=contexto_producto)
         ]
-        
+
+        # Log de entrada al LLM
+        logger.info(
+            f"🤖 [LLM REQUEST] Generando mensaje de recomendación\n"
+            f"   • Estilo: {estilo}\n"
+            f"   • Producto: {producto.get('product_name', 'N/A')}\n"
+            f"   • Precio: ${float(producto.get('final_price', 0)):.2f}"
+        )
+        logger.debug(f"📝 [LLM SYSTEM PROMPT]\n{system_prompt}")
+        logger.debug(f"📝 [LLM USER CONTEXT]\n{contexto_producto}")
+
         try:
             response = await asyncio.wait_for(
                 self.llm_provider.model.ainvoke(messages),
                 timeout=10.0
             )
-            return response.content.strip()
+            mensaje_generado = response.content.strip()
+
+            # Log de salida del LLM
+            logger.info(
+                f"✅ [LLM RESPONSE] Mensaje generado exitosamente\n"
+                f"   • Longitud: {len(mensaje_generado)} caracteres\n"
+                f"   • Contenido:\n"
+                f"   {mensaje_generado}"
+            )
+
+            return mensaje_generado
         except asyncio.TimeoutError:
+            logger.warning("⏱️ [LLM TIMEOUT] Usando mensaje fallback")
             # Fallback simple si el LLM no responde
             return self._fallback_mensaje(producto, guion)
     
