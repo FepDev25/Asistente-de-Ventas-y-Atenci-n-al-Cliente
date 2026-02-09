@@ -180,17 +180,42 @@ class ProductService:
                 )
                 result = await session.execute(query)
                 products = list(result.scalars().all())
-                
-                # Log de resultados
+
+                # Log detallado de resultados
                 found_barcodes = {p.barcode for p in products if p.barcode}
                 missing_barcodes = set(barcodes) - found_barcodes
-                
+
                 self.logger.info(
-                    f"🗃️ Búsqueda por barcodes: {len(products)}/{len(barcodes)} encontrados"
+                    f"🔍 [BÚSQUEDA BARCODES] Buscando {len(barcodes)} códigos de barras"
                 )
+                self.logger.info(f"📋 Barcodes solicitados: {barcodes}")
+
+                if products:
+                    self.logger.info(
+                        f"✅ [PRODUCTOS ENCONTRADOS] {len(products)}/{len(barcodes)} productos"
+                    )
+                    for idx, p in enumerate(products, 1):
+                        log_msg = (
+                            f"   [{idx}] {p.product_name}\n"
+                            f"       • ID: {p.id}\n"
+                            f"       • Barcode: {p.barcode}\n"
+                            f"       • Precio original: ${float(p.unit_cost):.2f}\n"
+                            f"       • Precio final: ${float(p.final_price):.2f}"
+                        )
+                        if p.is_on_sale:
+                            log_msg += f"\n       • 🔥 DESCUENTO: {float(p.discount_percent)}% (ahorro: ${float(p.savings_amount):.2f})"
+                        log_msg += f"\n       • Stock disponible: {p.quantity_available} unidades"
+                        self.logger.info(log_msg)
+                else:
+                    self.logger.warning("❌ No se encontraron productos")
+
                 if missing_barcodes:
-                    self.logger.warning(f"❌ No encontrados: {missing_barcodes}")
-                
+                    self.logger.warning(
+                        f"⚠️ [BARCODES NO ENCONTRADOS] {len(missing_barcodes)} códigos no existen en BD:"
+                    )
+                    for barcode in missing_barcodes:
+                        self.logger.warning(f"   • {barcode}")
+
                 return products
                 
         except Exception as e:
