@@ -7,7 +7,7 @@ import asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from backend.config.settings import settings
+from backend.config import get_business_settings
 from backend.database.models.base import Base
 from backend.database.models.chat_history import ChatHistory
 
@@ -16,14 +16,15 @@ async def migrate():
     """Crea la tabla chat_history en la base de datos."""
     
     # Crear engine
+    settings = get_business_settings()
     engine = create_async_engine(
-        settings.database_url,
+        str(settings.pg_url),
         echo=True,
     )
     
     async with engine.begin() as conn:
-        # Crear la tabla chat_history
-        await conn.run_sync(Base.metadata.create_tables, tables=[ChatHistory.__table__])
+        # Crear la tabla chat_history (usar create_all en lugar de create_tables)
+        await conn.run_sync(Base.metadata.create_all)
         
         # Crear índices adicionales para optimización de queries
         try:

@@ -38,6 +38,7 @@ from backend.database.models.order import Order, OrderStatus
 from backend.database.models.order_detail import OrderDetail
 from backend.database.models.product_stock import ProductStock
 from backend.database.models.user_model import User
+from backend.database.models.chat_history import ChatHistory
 from backend.database.session import get_session_factory
 from backend.config.security import securityJWT
 
