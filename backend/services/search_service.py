@@ -5,6 +5,7 @@ Ahora orquesta múltiples agentes especializados a través del AgentOrchestrator
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Dict, TYPE_CHECKING
+from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from backend.domain.agent_schemas import AgentState
@@ -12,6 +13,7 @@ from backend.domain.agent_schemas import AgentState
 if TYPE_CHECKING:
     from backend.agents.orchestrator import AgentOrchestrator
     from backend.services.session_service import SessionService
+    from backend.services.chat_history_service import ChatHistoryService
 
 
 @dataclass
@@ -37,9 +39,15 @@ class SearchService:
         self,
         orchestrator: AgentOrchestrator,
         session_service: Optional[SessionService] = None,
+        chat_history_service: Optional['ChatHistoryService'] = None,
+        session_factory: Optional[object] = None,
     ):
         self.orchestrator = orchestrator
         self.session_service = session_service
+        # Optional service used to persist chat messages to PostgreSQL
+        self.chat_history_service = chat_history_service
+        # Async session factory (async_sessionmaker) to create DB sessions
+        self.session_factory = session_factory
 
         # Fallback a memoria si no hay SessionService (desarrollo/testing)
         if self.session_service is None:
@@ -50,7 +58,8 @@ class SearchService:
 
         logger.info(
             f"SearchService inicializado con AgentOrchestrator "
-            f"(sesiones: {'Redis' if self.session_service else 'Memoria'})"
+            f"(sesiones: {'Redis' if self.session_service else 'Memoria'}, "
+            f"chat_history: {'enabled' if self.chat_history_service else 'disabled'})"
         )
 
     async def semantic_search(
@@ -115,6 +124,33 @@ class SearchService:
                 **response.metadata,
             },
         )
+
+        # Persistir mensajes en BD (usuario -> agente) si el servicio está disponible
+        try:
+            if self.chat_history_service and self.session_factory and session_id and user_id:
+                # Crear sesión de DB y guardar ambos mensajes (user y agent)
+                async with self.session_factory() as db_session:  # type: AsyncSession
+                    # Guardar mensaje del usuario
+                    await self.chat_history_service.add_message(
+                        session=db_session,
+                        session_id=session_id,
+                        user_id=user_id,
+                        role="USER",
+                        message=query,
+                        cache_only=False,
+                    )
+
+                    # Guardar respuesta del agente
+                    await self.chat_history_service.add_message(
+                        session=db_session,
+                        session_id=session_id,
+                        user_id=user_id,
+                        role="AGENT",
+                        message=response.message,
+                        cache_only=False,
+                    )
+        except Exception as e:
+            logger.error(f"Error persisting chat messages: {e}")
 
         logger.info(
             f"Respuesta generada por: {result.agent_used} "

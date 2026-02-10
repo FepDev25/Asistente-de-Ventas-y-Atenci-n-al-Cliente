@@ -14,7 +14,7 @@ from backend.database.models.base import Base
 
 if TYPE_CHECKING:
     from backend.database.models.order import Order
-    from backend.database.models.chat_history import ChatHistory
+from backend.database.models.chat_history import ChatHistory
 
 
 class User(Base):
