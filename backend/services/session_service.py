@@ -232,6 +232,33 @@ class SessionService:
             logger.error(f"Health check de Redis falló: {e}")
             return False
 
+    async def clear_chat_history(self, session_id: str) -> bool:
+        """
+        Elimina el historial de chat en caché para una sesión.
+
+        Útil cuando la sesión expira o el usuario cierra el chat.
+
+        Args:
+            session_id: ID de sesión
+
+        Returns:
+            True si se limpió
+        """
+        try:
+            # Patrón para eliminar caché de chat de esta sesión
+            pattern = f"{self.key_prefix}:chat:{session_id}*"
+            keys = await self.redis.keys(pattern)
+
+            if keys:
+                await self.redis.delete(*keys)
+                logger.info(f"Caché de chat limpiado para sesión {session_id}")
+
+            return True
+
+        except redis.RedisError as e:
+            logger.error(f"Error limpiando caché de chat: {e}")
+            return False
+
     async def close(self):
         """Cierra la conexión a Redis limpiamente."""
         try:
