@@ -14,6 +14,7 @@ from backend.database.models.base import Base
 
 if TYPE_CHECKING:
     from backend.database.models.order import Order
+    from backend.database.models.chat_history import ChatHistory
 
 
 class User(Base):
@@ -53,6 +54,12 @@ class User(Base):
     orders: Mapped[List["Order"]] = relationship(
         back_populates="user",
         lazy="dynamic"
+    )
+    
+    chat_messages: Mapped[List["ChatHistory"]] = relationship(
+        back_populates="user",
+        lazy="dynamic",
+        cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
