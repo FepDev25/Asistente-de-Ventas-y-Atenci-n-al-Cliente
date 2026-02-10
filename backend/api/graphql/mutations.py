@@ -312,10 +312,21 @@ class BusinessMutation:
                 siguiente_paso="login"
             )
         
-        logger.info(
-            f"Procesando guion Agente 2: session={guion.session_id}, "
-            f"productos={len(guion.productos)}, user={current_user.get('username')}"
-        )
+        logger.info("="*80)
+        logger.info("🎬 INICIO FLUJO GUION AGENTE 2 → AGENTE 3")
+        logger.info("="*80)
+        logger.info(f"📋 Datos de entrada:")
+        logger.info(f"   • Usuario: {current_user.get('username')}")
+        logger.info(f"   • Session ID: {guion.session_id}")
+        logger.info(f"   • Productos detectados: {len(guion.productos)}")
+        logger.info(f"   • Presupuesto máximo: ${guion.preferencias.presupuesto_maximo if guion.preferencias.presupuesto_maximo else 'Sin límite'}")
+        logger.info(f"   • Urgencia: {guion.preferencias.urgencia}")
+        logger.info(f"   • Busca ofertas: {'Sí' if guion.preferencias.busca_ofertas else 'No'}")
+        logger.info(f"   • Estilo comunicación: {guion.preferencias.estilo_comunicacion}")
+        logger.info(f"   • Uso previsto: {guion.preferencias.uso_previsto or 'No especificado'}")
+        texto_corto = guion.texto_original_usuario[:100] + "..." if len(guion.texto_original_usuario) > 100 else guion.texto_original_usuario
+        logger.info(f"   • Texto original usuario: {texto_corto}")
+        logger.info("-"*80)
         
         try:
             # 1. Convertir input GraphQL a schema Pydantic
@@ -500,10 +511,20 @@ class BusinessMutation:
                 import json
                 session_key = f"guion_session:{guion_completo.session_id}"
                 await redis_client.setex(session_key, 1800, json.dumps(session_data))  # 30 min TTL
-                logger.info(f"Sesión guardada en Redis: {guion_completo.session_id}")
+                logger.info(f"💾 Sesión guardada en Redis:")
+                logger.info(f"   • Session ID: {guion_completo.session_id}")
+                logger.info(f"   • TTL: 1800 segundos (30 minutos)")
+                logger.info(f"   • Productos en sesión: {len(session_data['productos'])}")
+                logger.info(f"   • Mejor opción ID: {session_data['mejor_opcion_id']}")
                 await redis_client.close()
+                logger.info("-"*80)
             except Exception as redis_err:
                 logger.warning(f"No se pudo guardar sesión en Redis: {redis_err}")
+            
+            logger.info("✅ FLUJO COMPLETADO EXITOSAMENTE")
+            logger.info(f"   • Siguiente paso: {siguiente_paso}")
+            logger.info(f"   • Mensaje generado para usuario ({len(mensaje)} caracteres)")
+            logger.info("="*80)
             
             return RecomendacionResponse(
                 success=True,
@@ -515,7 +536,11 @@ class BusinessMutation:
             )
             
         except Exception as e:
-            logger.error(f"Error procesando guion: {e}", exc_info=True)
+            logger.error("❌"*40)
+            logger.error(f"💥 ERROR PROCESANDO GUION")
+            logger.error(f"   • Tipo: {type(e).__name__}")
+            logger.error(f"   • Mensaje: {str(e)}")
+            logger.error("❌"*40, exc_info=True)
             return RecomendacionResponse(
                 success=False,
                 mensaje=f"Error procesando el guión: {str(e)}",
