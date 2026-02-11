@@ -1,11 +1,11 @@
-# 💬 GUIONES NATURALES - Acento Cuencano
+# GUIONES NATURALES - Acento Cuencano
 
 **Formato:** Mensajes tal como los escribiría un usuario real de Cuenca  
 **Propósito:** Probar el flujo completo con texto natural y conversacional
 
 ---
 
-## 📝 GUIÓN 1: Compra Casual - Regalo para Hermano
+## GUIÓN 1: Compra Casual - Regalo para Hermano
 
 **COPIAR Y PEGAR:**
 
@@ -15,7 +15,7 @@ Buenas, mira, estoy viendo unas zapatillas para regalarle a mi hermano que cumpl
 
 ---
 
-## 📝 GUIÓN 2: Comparación Running - Presupuesto Ajustado
+## GUIÓN 2: Comparación Running - Presupuesto Ajustado
 
 **COPIAR Y PEGAR:**
 
@@ -25,7 +25,7 @@ Hola, necesito que me ayudes a comparar porque estoy medio perdido. Quiero compr
 
 ---
 
-## 📝 GUIÓN 3: Urgente - Viaje Mañana
+## GUIÓN 3: Urgente - Viaje Mañana
 
 **COPIAR Y PEGAR:**
 
@@ -35,7 +35,7 @@ Oe ayúdame urgente porfa! Mañana temprano me voy de viaje a Guayaquil y se me 
 
 ---
 
-## 📝 GUIÓN 4: Regalo Hijo - Busca Ofertas
+## GUIÓN 4: Regalo Hijo - Busca Ofertas
 
 **COPIAR Y PEGAR:**
 
@@ -45,7 +45,7 @@ Buenos días, estoy buscando unas zapatillas para mi guagua que tiene 15 años. 
 
 ---
 
-## 📝 GUIÓN 5: Deportista Serio - Alto Presupuesto
+## GUIÓN 5: Deportista Serio - Alto Presupuesto
 
 **COPIAR Y PEGAR:**
 
@@ -55,7 +55,7 @@ Hola, soy corredor y estoy entrenando para el Maratón de Cuenca que es en abril
 
 ---
 
-## 📝 GUIÓN 6: Mujer Joven - Universidad
+## GUIÓN 6: Mujer Joven - Universidad
 
 **COPIAR Y PEGAR:**
 
@@ -65,7 +65,7 @@ Holiii necesito tu ayuda! Quiero comprarme unos zapatos para la universidad, que
 
 ---
 
-## 📝 GUIÓN 7: Padre Trabajador - Día a Día
+## GUIÓN 7: Padre Trabajador - Día a Día
 
 **COPIAR Y PEGAR:**
 
@@ -75,7 +75,7 @@ Buenas tardes, necesito comprar unas zapatillas para mi trabajo y para andar por
 
 ---
 
-## 📝 GUIÓN 8: Oferta Black Friday - Varios Productos
+## GUIÓN 8: Oferta Black Friday - Varios Productos
 
 **COPIAR Y PEGAR:**
 
@@ -85,7 +85,7 @@ Oeee están con descuentos? Vi que hay ofertas y quiero aprovechar! Estoy mirand
 
 ---
 
-## 📝 GUIÓN 9: Regalo Novia - Romántico
+## GUIÓN 9: Regalo Novia - Romántico
 
 **COPIAR Y PEGAR:**
 
@@ -95,7 +95,7 @@ Hola, quiero regalarle unas zapatillas a mi novia para San Valentín que ya vien
 
 ---
 
-## 📝 GUIÓN 10: Gym - Principiante
+## GUIÓN 10: Gym - Principiante
 
 **COPIAR Y PEGAR:**
 
@@ -105,7 +105,7 @@ Buenas, recién me inscribí al gimnasio porque mi doctor me dijo que tengo que 
 
 ---
 
-## 📝 GUIÓN 11: Teenager - Moda
+## GUIÓN 11: Teenager - Moda
 
 **COPIAR Y PEGAR:**
 
@@ -115,7 +115,7 @@ Wenaaa necesito unos zapatos nuevos ya! Los que tengo ya están feísimos. Quier
 
 ---
 
-## 📝 GUIÓN 12: Señora Mayor - Comodidad
+## GUIÓN 12: Señora Mayor - Comodidad
 
 **COPIAR Y PEGAR:**
 
@@ -125,7 +125,7 @@ Buenos días mijito, estoy buscando unas zapatillas bien cómodas porque ya esto
 
 ---
 
-## 📝 GUIÓN 13: Viajero - Resistencia
+## GUIÓN 13: Viajero - Resistencia
 
 **COPIAR Y PEGAR:**
 
@@ -135,7 +135,7 @@ Hola qué tal, en dos meses me voy de mochilero por Sudamérica y necesito zapat
 
 ---
 
-## 📝 GUIÓN 14: Doble Uso - Trabajo y Gym
+## GUIÓN 14: Doble Uso - Trabajo y Gym
 
 **COPIAR Y PEGAR:**
 
@@ -145,7 +145,7 @@ Buenas, ando buscando unas zapatillas que me sirvan tanto para el trabajo como p
 
 ---
 
-## 📝 GUIÓN 15: Indeciso Total
+## GUIÓN 15: Indeciso Total
 
 **COPIAR Y PEGAR:**
 
@@ -155,36 +155,36 @@ Holaa, estoy súper indeciso y necesito ayuda urgente jajaja. Quiero comprarme z
 
 ---
 
-## ✅ INFORMACIÓN INCLUIDA EN CADA GUIÓN:
+## INFORMACIÓN INCLUIDA EN CADA GUIÓN:
 
 Todos los guiones incluyen sutilmente:
-- ✅ **Códigos de barras** de los productos
-- ✅ **Nombres** de productos
-- ✅ **Prioridad implícita** (orden de mención)
-- ✅ **Motivo de selección** (características mencionadas)
-- ✅ **Presupuesto** específico
-- ✅ **Urgencia** (urgente, media, baja)
-- ✅ **Uso previsto** detallado
-- ✅ **Búsqueda de ofertas** (sí/no)
-- ✅ **Contexto personal** realista
+- **Códigos de barras** de los productos
+- **Nombres** de productos
+- **Prioridad implícita** (orden de mención)
+- **Motivo de selección** (características mencionadas)
+- **Presupuesto** específico
+- **Urgencia** (urgente, media, baja)
+- **Uso previsto** detallado
+- **Búsqueda de ofertas** (sí/no)
+- **Contexto personal** realista
 
 ## 💡 CASOS CUBIERTOS:
 
-1. ✅ Regalo familiar
-2. ✅ Uso deportivo amateur
-3. ✅ Compra urgente
-4. ✅ Presupuesto limitado
-5. ✅ Deportista profesional
-6. ✅ Estudiante universitario
-7. ✅ Trabajador oficina
-8. ✅ Aprovechamiento de ofertas
-9. ✅ Regalo romántico
-10. ✅ Principiante gym
-11. ✅ Adolescente moda
-12. ✅ Persona mayor comodidad
-13. ✅ Viajero resistencia
-14. ✅ Doble propósito
-15. ✅ Usuario indeciso
+1. Regalo familiar
+2. Uso deportivo amateur
+3. Compra urgente
+4. Presupuesto limitado
+5. Deportista profesional
+6. Estudiante universitario
+7. Trabajador oficina
+8. Aprovechamiento de ofertas
+9. Regalo romántico
+10. Principiante gym
+11. Adolescente moda
+12. Persona mayor comodidad
+13. Viajero resistencia
+14. Doble propósito
+15. Usuario indeciso
 
 ---
 
