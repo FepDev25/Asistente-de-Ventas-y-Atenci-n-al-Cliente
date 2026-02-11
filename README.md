@@ -229,7 +229,7 @@ sequenceDiagram
 
 > **Nota**: Video demostrativo del sistema en funcionamiento (máximo 3 minutos)
 
-**URL del video**: [INSERTAR_URL_AQUI]
+**URL del video**: [https://drive.google.com/file/d/1JmZoQu6TMCq80Hi1yvWG_cJkTWX8jnz0/view]
 
 **Contenido del video**:
 - Flujo de consulta FAQ con respuesta de voz
