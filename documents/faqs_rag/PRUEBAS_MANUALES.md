@@ -1,11 +1,5 @@
 # Guía de Pruebas Manuales - FAQs y RAG
 
-## Pre-requisitos
-
-1. Backend corriendo: `uvicorn backend.main:app --reload`
-2. Frontend corriendo: `npm start` (en carpeta frontend/asistentebot)
-3. Usuario autenticado en el frontend
-
 ---
 
 ## Test 1: Saludo Simple (FAQ)
@@ -73,38 +67,9 @@ tienen garantía
 qué hacen con el medio ambiente
 ```
 
-
-## Test 8: Promociones (RAG - Chunks)
-
-### Prompt:
-
-```
-tienen promociones
-```
-
 ---
 
-## Test 9: Guion Flow (Comparación Productos)
-
-### Prompt:
-
-```
-quiero las air max y las air force
-```
-
----
-
-## Test 10: Integración FAQ + Guion
-
-### Secuencia:
-
-```
-1. "hola"
-2. "quiero las ultraboost"
-3. "cuál es el horario"
-```
-
-## Test 11: Guion
+## Test 10: Guion
 
 ### Secuencia:
 
@@ -112,3 +77,12 @@ quiero las air max y las air force
 Buenas tardes, necesito comprar unas zapatillas para mi trabajo y para andar por la casa. Yo trabajo en una oficina pero igual camino bastante durante el día y los fines de semana salgo con la familia. Estuve viendo la Nike Air Max 90 código 7501234567891 que dicen que es clásica y cómoda, la Adidas Ultraboost código 8806098934474 que parece que es súper cómoda para caminar, y la Nike Court Vision Low código 7501234567894 que es más económica. Tengo como 130 dólares de presupuesto. 
 ```
 
+reiniciar la pagina
+
+```
+si
+```
+
+```
+39 y avenida americas
+```

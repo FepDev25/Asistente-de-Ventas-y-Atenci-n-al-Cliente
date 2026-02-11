@@ -164,7 +164,7 @@ sequenceDiagram
     EL-->>SA: Audio URL
 
     SA-->>API: Respuesta completa
-    Note over API: {<br/>  mensaje: "Comparé 3 opciones...",<br/>  productos: [...],<br/>  mejorOpcionId: "uuid",<br/>  audioUrl: "data:audio/mpeg;base64..."<br/>}
+    Note over API: Response GraphQL:<br/>mensaje + productos<br/>+ mejorOpcionId + audioURL
 
     API-->>F: Response GraphQL
     F->>F: - Renderiza comparación<br/>- Reproduce audio<br/>- Muestra "Confirmar compra"
