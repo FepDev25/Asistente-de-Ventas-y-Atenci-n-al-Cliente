@@ -87,7 +87,42 @@ class SearchService:
                 if session_state:
                     logger.debug(f"Sesión recuperada de Redis: {session_id}")
                 else:
-                    logger.debug(f"Nueva sesión (Redis): {session_id}")
+                    # Redis no tiene la sesión (posiblemente expirada por TTL)
+                    # Intentar reconstruir desde PostgreSQL si hay historial
+                    if self.chat_history_service and user_id:
+                        try:
+                            messages = await self.chat_history_service.get_unarchived_session_messages(
+                                session_id=session_id
+                            )
+
+                            if messages:
+                                # Reconstruir AgentState desde historial de PostgreSQL
+                                conversation_history = [
+                                    {"role": msg.role, "content": msg.message}
+                                    for msg in messages[-10:]  # Últimos 10 mensajes para contexto
+                                ]
+
+                                session_state = AgentState(
+                                    session_id=session_id,
+                                    conversation_history=conversation_history
+                                )
+
+                                logger.info(
+                                    f"✅ Sesión reconstruida desde PostgreSQL: {session_id} "
+                                    f"({len(messages)} mensajes históricos)"
+                                )
+
+                                # Guardar sesión reconstruida en Redis para futuros requests
+                                await self.session_service.save_session(session_id, session_state)
+                            else:
+                                logger.debug(f"Nueva sesión (Redis): {session_id}")
+                        except Exception as e:
+                            logger.warning(
+                                f"No se pudo reconstruir sesión desde PostgreSQL: {e}"
+                            )
+                            logger.debug(f"Nueva sesión (Redis): {session_id}")
+                    else:
+                        logger.debug(f"Nueva sesión (Redis): {session_id}")
             else:
                 # Fallback a memoria
                 session_state = self._fallback_sessions.get(session_id)
@@ -126,31 +161,27 @@ class SearchService:
         )
 
         # Persistir mensajes en BD (usuario -> agente) si el servicio está disponible
-        try:
-            if self.chat_history_service and self.session_factory and session_id and user_id:
-                # Crear sesión de DB y guardar ambos mensajes (user y agent)
-                async with self.session_factory() as db_session:  # type: AsyncSession
-                    # Guardar mensaje del usuario
-                    await self.chat_history_service.add_message(
-                        session=db_session,
-                        session_id=session_id,
-                        user_id=user_id,
-                        role="USER",
-                        message=query,
-                        cache_only=False,
-                    )
+        if self.chat_history_service and session_id and user_id:
+            try:
+                # Guardar mensaje del usuario
+                await self.chat_history_service.add_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="USER",
+                    message=query
+                )
 
-                    # Guardar respuesta del agente
-                    await self.chat_history_service.add_message(
-                        session=db_session,
-                        session_id=session_id,
-                        user_id=user_id,
-                        role="AGENT",
-                        message=response.message,
-                        cache_only=False,
-                    )
-        except Exception as e:
-            logger.error(f"Error persisting chat messages: {e}")
+                # Guardar respuesta del agente
+                await self.chat_history_service.add_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="AGENT",
+                    message=response.message
+                )
+
+                logger.info(f"💾 Conversación persistida en PostgreSQL (session: {session_id})")
+            except Exception as e:
+                logger.error(f"Error persistiendo mensajes en BD: {e}", exc_info=True)
 
         logger.info(
             f"Respuesta generada por: {result.agent_used} "

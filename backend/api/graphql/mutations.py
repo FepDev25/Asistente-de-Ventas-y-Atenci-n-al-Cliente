@@ -37,7 +37,9 @@ from backend.services.order_service import OrderService, OrderServiceError, Insu
 from backend.services.product_service import ProductService
 from backend.services.product_comparison_service import ProductComparisonService
 from backend.services.session_service import SessionService
+from backend.services.chat_history_service import ChatHistoryService
 from backend.llm.provider import LLMProvider
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
 from backend.domain.agent_schemas import AgentState
 from backend.domain.guion_schemas import GuionEntrada, ProductoEnGuion, PreferenciasUsuario, ContextoBusqueda
@@ -256,6 +258,8 @@ class BusinessMutation:
         product_service: Annotated[ProductService, Inject],
         llm_provider: Annotated[LLMProvider, Inject],
         session_service: Annotated[SessionService, Inject],
+        chat_history_service: Annotated["ChatHistoryService", Inject],
+        session_factory: Annotated[async_sessionmaker[AsyncSession], Inject],
     ) -> RecomendacionResponse:
         """
         Procesa un guion del Agente 2 y genera una recomendación.
@@ -520,15 +524,66 @@ class BusinessMutation:
                 logger.info("-"*80)
             except Exception as redis_err:
                 logger.warning(f"No se pudo guardar sesión en Redis: {redis_err}")
-            
+
+            # 7.5. Construir mensaje completo con lista de productos (igual que el frontend)
+            mensaje_completo = f"{mensaje}\n\n"
+
+            if recommendation.products:
+                mensaje_completo += "**Productos comparados:**\n\n"
+                for prod in recommendation.products:
+                    emoji = "⭐" if prod.id == recommendation.best_option_id else "•"
+                    mensaje_completo += f"{emoji} **{prod.product_name}**\n"
+                    mensaje_completo += f"   Precio: ${float(prod.final_price):.2f}"
+
+                    if prod.is_on_sale and prod.discount_percent:
+                        mensaje_completo += f" ~~${float(prod.unit_cost):.2f}~~ ({float(prod.discount_percent):.2f}% OFF)"
+
+                    mensaje_completo += f"\n   Score: {prod.recommendation_score}/100\n"
+                    mensaje_completo += f"   {prod.reason}\n\n"
+
+            if siguiente_paso == "confirmar_compra":
+                mensaje_completo += "\n¿Te interesa este producto? Responde **\"sí\"** o **\"no\"**."
+
+            # 8. Persistir conversación en PostgreSQL (ChatHistory)
+            if chat_history_service:
+                try:
+                    # Guardar mensaje del usuario (pregunta original)
+                    await chat_history_service.add_message(
+                        session_id=guion_completo.session_id,
+                        user_id=current_user["id"],
+                        role="USER",
+                        message=guion_completo.texto_original_usuario,
+                        metadata_json=json.dumps({
+                            "tipo": "guion_inicial",
+                            "productos_consultados": [p.codigo_barras for p in guion_completo.productos]
+                        })
+                    )
+
+                    # Guardar respuesta del agente (MENSAJE COMPLETO con productos)
+                    await chat_history_service.add_message(
+                        session_id=guion_completo.session_id,
+                        user_id=current_user["id"],
+                        role="AGENT",
+                        message=mensaje_completo,  # ← Mensaje COMPLETO
+                        metadata_json=json.dumps({
+                            "mejor_opcion_id": str(recommendation.best_option_id),
+                            "productos_comparados": len(recommendation.products),
+                            "siguiente_paso": siguiente_paso
+                        })
+                    )
+
+                    logger.info(f"💾 Conversación persistida en PostgreSQL (session: {guion_completo.session_id})")
+                except Exception as persist_err:
+                    logger.warning(f"No se pudo persistir conversación: {persist_err}")
+
             logger.info("✅ FLUJO COMPLETADO EXITOSAMENTE")
             logger.info(f"   • Siguiente paso: {siguiente_paso}")
-            logger.info(f"   • Mensaje generado para usuario ({len(mensaje)} caracteres)")
+            logger.info(f"   • Mensaje generado para usuario ({len(mensaje_completo)} caracteres)")
             logger.info("="*80)
-            
+
             return RecomendacionResponse(
                 success=True,
-                mensaje=mensaje,
+                mensaje=mensaje,  # Mantener mensaje corto para el frontend (él construye su versión)
                 productos=productos_response,
                 mejor_opcion_id=recommendation.best_option_id,
                 reasoning=recommendation.reasoning,
@@ -562,6 +617,8 @@ class BusinessMutation:
         respuesta_usuario: str,
         order_service: Annotated[OrderService, Inject],
         product_service: Annotated[ProductService, Inject],
+        chat_history_service: Annotated["ChatHistoryService", Inject],
+        session_factory: Annotated[async_sessionmaker[AsyncSession], Inject],
     ) -> ContinuarConversacionResponse:
         """
         Continúa el flujo de conversación después de procesarGuionAgente2.
@@ -647,10 +704,38 @@ class BusinessMutation:
                 )
                 await redis_client_update.setex(session_key, 1800, json.dumps(session_data))
                 await redis_client_update.close()
-                
+
+                mensaje_respuesta = "¡Qué bacán que te gustaron! 🎉\n\nPara ya mismo coordinar el envío y que te lleguen rápidito, ¿me confirmas qué talla necesitas y a qué dirección te las hacemos llegar?"
+
+                # Persistir conversación en PostgreSQL
+                if chat_history_service:
+                    try:
+                        async with session_factory() as db_session:
+                            # Guardar mensaje del usuario
+                            await chat_history_service.add_message(
+                                session_id=session_id,
+                                user_id=current_user["id"],
+                                role="USER",
+                                message=respuesta_usuario,
+                                metadata_json=json.dumps({"tipo": "aprobacion"})
+                            )
+                            # Guardar respuesta del agente
+                            await chat_history_service.add_message(
+                                session_id=session_id,
+                                user_id=current_user["id"],
+                                role="AGENT",
+                                message=mensaje_respuesta,
+                                metadata_json=json.dumps({
+                                    "siguiente_paso": "solicitar_datos_envio",
+                                    "mejor_opcion_id": session_data.get('mejor_opcion_id')
+                                })
+                            )
+                    except Exception as persist_err:
+                        logger.warning(f"No se pudo persistir conversación: {persist_err}")
+
                 return ContinuarConversacionResponse(
                     success=True,
-                    mensaje="¡Qué bacán que te gustaron! 🎉\n\nPara ya mismo coordinar el envío y que te lleguen rápidito, ¿me confirmas qué talla necesitas y a qué dirección te las hacemos llegar?",
+                    mensaje=mensaje_respuesta,
                     mejor_opcion_id=session_data.get('mejor_opcion_id'),
                     siguiente_paso="solicitar_datos_envio"
                 )
@@ -694,7 +779,34 @@ class BusinessMutation:
                         mensaje += f"Son un estilo más clásico y versátil, a **${precio:.2f}**. \n\n"
                     
                     mensaje += "¿Te gustaría saber más o verlos?"
-                    
+
+                    # Persistir conversación en PostgreSQL
+                    if chat_history_service:
+                        try:
+                            async with session_factory() as db_session:
+                                # Guardar mensaje del usuario
+                                await chat_history_service.add_message(
+                                    session_id=session_id,
+                                    user_id=current_user["id"],
+                                    role="USER",
+                                    message=respuesta_usuario,
+                                    metadata_json=json.dumps({"tipo": "rechazo"})
+                                )
+                                # Guardar respuesta del agente
+                                await chat_history_service.add_message(
+                                    session_id=session_id,
+                                    user_id=current_user["id"],
+                                    role="AGENT",
+                                    message=mensaje,
+                                    metadata_json=json.dumps({
+                                        "siguiente_paso": "confirmar_compra",
+                                        "mejor_opcion_id": siguiente_producto.get('id'),
+                                        "producto_alternativo": True
+                                    })
+                                )
+                        except Exception as persist_err:
+                            logger.warning(f"No se pudo persistir conversación: {persist_err}")
+
                     return ContinuarConversacionResponse(
                         success=True,
                         mensaje=mensaje,
@@ -703,9 +815,37 @@ class BusinessMutation:
                     )
                 else:
                     # Sin más alternativas
+                    mensaje_sin_alternativas = "Entiendo que ninguno de estos modelos te convenció. ¿Te gustaría que busque otros estilos o marcas diferentes?"
+
+                    # Persistir conversación en PostgreSQL
+                    if chat_history_service:
+                        try:
+                            async with session_factory() as db_session:
+                                # Guardar mensaje del usuario
+                                await chat_history_service.add_message(
+                                    session_id=session_id,
+                                    user_id=current_user["id"],
+                                    role="USER",
+                                    message=respuesta_usuario,
+                                    metadata_json=json.dumps({"tipo": "rechazo"})
+                                )
+                                # Guardar respuesta del agente
+                                await chat_history_service.add_message(
+                                    session_id=session_id,
+                                    user_id=current_user["id"],
+                                    role="AGENT",
+                                    message=mensaje_sin_alternativas,
+                                    metadata_json=json.dumps({
+                                        "siguiente_paso": "nueva_conversacion",
+                                        "sin_alternativas": True
+                                    })
+                                )
+                        except Exception as persist_err:
+                            logger.warning(f"No se pudo persistir conversación: {persist_err}")
+
                     return ContinuarConversacionResponse(
                         success=True,
-                        mensaje="Entiendo que ninguno de estos modelos te convenció. ¿Te gustaría que busque otros estilos o marcas diferentes?",
+                        mensaje=mensaje_sin_alternativas,
                         siguiente_paso="nueva_conversacion"
                     )
             
@@ -801,6 +941,40 @@ class BusinessMutation:
                     mensaje += f"💰 **Total:** ${float(order.total_amount):.2f}\n"
                     mensaje += f"📊 **Estado:** {order.status}\n\n"
                     mensaje += f"¡Gracias por tu compra! Tu pedido está siendo procesado. 🚀"
+
+                    # Persistir conversación en PostgreSQL (con order_id)
+                    if chat_history_service:
+                        try:
+                            async with session_factory() as db_session:
+                                # Guardar mensaje del usuario (datos de envío)
+                                await chat_history_service.add_message(
+                                    session_id=session_id,
+                                    user_id=current_user["id"],
+                                    role="USER",
+                                    message=respuesta_usuario,
+                                    order_id=order.id,
+                                    metadata_json=json.dumps({
+                                        "tipo": "datos_envio",
+                                        "talla": talla,
+                                        "direccion": direccion
+                                    })
+                                )
+                                # Guardar respuesta del agente (confirmación de orden)
+                                await chat_history_service.add_message(
+                                    session_id=session_id,
+                                    user_id=current_user["id"],
+                                    role="AGENT",
+                                    message=mensaje,
+                                    order_id=order.id,
+                                    metadata_json=json.dumps({
+                                        "siguiente_paso": "orden_completada",
+                                        "order_number": order_number,
+                                        "total_amount": float(order.total_amount)
+                                    })
+                                )
+                                logger.info(f"💾 Orden completada persistida con order_id: {order.id}")
+                        except Exception as persist_err:
+                            logger.warning(f"No se pudo persistir conversación: {persist_err}")
 
                     return ContinuarConversacionResponse(
                         success=True,

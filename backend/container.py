@@ -22,6 +22,7 @@ from backend.services.tenant_data_service import TenantDataService
 from backend.services.rag_service import RAGService
 from backend.services.session_service import SessionService, create_redis_client
 from backend.services.user_service import UserService
+from backend.services.chat_history_service import ChatHistoryService
 from backend.config.redis_config import RedisSettings, get_redis_settings
 from backend.agents.retriever_agent import RetrieverAgent
 from backend.agents.sales_agent import SalesAgent
@@ -56,6 +57,12 @@ async def create_user_service(
 ) -> UserService:
     """Fabrica el servicio de usuarios conectándolo a la DB."""
     return UserService(session_factory)
+
+async def create_chat_history_service(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> ChatHistoryService:
+    """Fabrica el servicio de historial de chat conectándolo a la DB."""
+    return ChatHistoryService(session_factory)
 
 async def create_llm_provider_instance() -> LLMProvider:
     """Fabrica el proveedor de IA (Gemini)."""
@@ -116,6 +123,8 @@ async def create_session_service(
 async def create_search_service(
     orchestrator: AgentOrchestrator,
     session_service: SessionService = None,
+    chat_history_service: ChatHistoryService = None,
+    session_factory: async_sessionmaker[AsyncSession] = None,
 ) -> SearchService:
     """
     Fabrica el 'Cerebro' (SearchService).
@@ -123,7 +132,12 @@ async def create_search_service(
 
     Si session_service es None, usa fallback a memoria (desarrollo).
     """
-    return SearchService(orchestrator, session_service)
+    return SearchService(
+        orchestrator,
+        session_service,
+        chat_history_service,
+        session_factory
+    )
 
 
 # === Agentes del Sistema Multi-Agente ===
@@ -174,6 +188,7 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     providers_list.append(aioinject.Singleton(create_product_service))
     providers_list.append(aioinject.Singleton(create_order_service))
     providers_list.append(aioinject.Singleton(create_user_service))
+    providers_list.append(aioinject.Singleton(create_chat_history_service))
 
     # 2. Redis y Sesiones
     providers_list.append(aioinject.Singleton(create_redis_settings))

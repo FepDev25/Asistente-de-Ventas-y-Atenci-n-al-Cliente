@@ -48,6 +48,22 @@ export interface Order {
   notes?: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: 'USER' | 'AGENT' | 'SYSTEM';
+  message: string;
+  createdAt: string;
+  metadata?: string;
+  orderId?: string;
+}
+
+export interface ChatHistoryResponse {
+  messages: ChatMessage[];
+  total: number;
+  hasMore: boolean;
+}
+
 // ==================== HELPERS ====================
 
 function getAuthHeader(): Record<string, string> {
@@ -143,6 +159,47 @@ export class ChatService {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  async getChatHistory(
+    sessionId?: string,
+    limit: number = 100
+  ): Promise<{ messages: ChatMessage[]; total: number; hasMore: boolean }> {
+    const sid = sessionId || this.sessionId;
+    const query = `
+      query GetChatHistory($sessionId: String!, $limit: Int) {
+        getChatHistory(sessionId: $sessionId, limit: $limit) {
+          messages {
+            id
+            sessionId
+            role
+            message
+            createdAt
+            metadata
+            orderId
+          }
+          total
+          hasMore
+        }
+      }
+    `;
+
+    try {
+      const result = await graphQLFetch<{ getChatHistory: ChatHistoryResponse }>(
+        query,
+        { sessionId: sid, limit }
+      );
+
+      if (result.errors || !result.data) {
+        console.error('Error obteniendo historial:', result.errors);
+        return { messages: [], total: 0, hasMore: false };
+      }
+
+      return result.data.getChatHistory;
+    } catch (err) {
+      console.error('Error en ChatService.getChatHistory:', err);
+      return { messages: [], total: 0, hasMore: false };
+    }
   }
 }
 

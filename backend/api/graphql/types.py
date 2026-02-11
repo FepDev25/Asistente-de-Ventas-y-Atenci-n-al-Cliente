@@ -340,3 +340,50 @@ class ProductFilterInput:
     max_price: Optional[Decimal] = None
     in_stock: Optional[bool] = None
     warehouse_location: Optional[str] = None
+
+
+# ============================================================================
+# TIPOS DE HISTORIAL DE CHAT
+# ============================================================================
+
+@strawberry.type
+class ChatMessageType:
+    """
+    Representa un mensaje individual en el historial de chat.
+
+    Puede ser de tipo USER (usuario), AGENT (Alex el asistente) o SYSTEM.
+    """
+    id: UUID
+    session_id: str
+    role: str  # USER, AGENT, SYSTEM
+    message: str
+    created_at: datetime
+    metadata: Optional[str] = None
+    order_id: Optional[UUID] = None
+
+
+@strawberry.type
+class ChatHistoryResponse:
+    """
+    Respuesta completa de historial de chat con paginación.
+
+    Incluye lista de mensajes y metadata para paginación.
+    """
+    messages: List[ChatMessageType]
+    total: int
+    session_id: str
+    has_more: bool
+
+
+@strawberry.type
+class ChatSessionType:
+    """
+    Representa una sesión de chat (conversación).
+
+    Útil para listar conversaciones del usuario con resumen.
+    """
+    session_id: str
+    user_id: UUID
+    message_count: int
+    last_message: str
+    last_timestamp: datetime

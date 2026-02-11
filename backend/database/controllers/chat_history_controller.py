@@ -111,14 +111,14 @@ class ChatHistoryController:
         Returns:
             Tupla con (lista de mensajes, total de mensajes)
         """
-        # Contar total
-        count_result = await session.execute(
-            select(ChatHistory).where(
-                ChatHistory.session_id == session_id
-            ).with_entities(
-                *[ChatHistory.__table__.c]
-            )
+        from sqlalchemy import func
+
+        # Contar total (SQLAlchemy 2.0)
+        count_query = select(func.count()).select_from(ChatHistory).where(
+            ChatHistory.session_id == session_id
         )
+        count_result = await session.execute(count_query)
+        total = count_result.scalar() or 0
 
         # Obtener mensajes ordenados por fecha (más antiguos primero)
         result = await session.execute(
@@ -129,12 +129,6 @@ class ChatHistoryController:
             .offset(offset)
         )
         messages = result.scalars().all()
-
-        # Contar total
-        count_result = await session.execute(
-            select(ChatHistory).where(ChatHistory.session_id == session_id)
-        )
-        total = len(count_result.scalars().all())
 
         logger.debug(
             f"Historial recuperado: {len(messages)} mensajes de sesión {session_id}"
@@ -160,6 +154,15 @@ class ChatHistoryController:
         Returns:
             Tupla con (lista de mensajes, total de mensajes)
         """
+        from sqlalchemy import func
+
+        # Contar total (SQLAlchemy 2.0)
+        count_query = select(func.count()).select_from(ChatHistory).where(
+            ChatHistory.user_id == user_id
+        )
+        count_result = await session.execute(count_query)
+        total = count_result.scalar() or 0
+
         # Obtener mensajes ordenados por fecha (más recientes primero)
         result = await session.execute(
             select(ChatHistory)
@@ -169,12 +172,6 @@ class ChatHistoryController:
             .offset(offset)
         )
         messages = result.scalars().all()
-
-        # Contar total
-        count_result = await session.execute(
-            select(ChatHistory).where(ChatHistory.user_id == user_id)
-        )
-        total = len(count_result.scalars().all())
 
         logger.debug(
             f"Historial de usuario recuperado: {len(messages)} mensajes de usuario {user_id}"

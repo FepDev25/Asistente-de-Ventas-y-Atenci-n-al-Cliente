@@ -268,17 +268,12 @@ export const PRODUCT_IMAGES: Record<string, ProductImage> = {
  * @returns URL de la imagen
  */
 export const getProductImageUrl = (barcode: string | null | undefined, productId: string): string => {
-  // DEBUG: Ver qué barcode llega
-  console.log('🔍 getProductImageUrl called:', { barcode, productId, exists: barcode ? barcode in PRODUCT_IMAGES : false });
-
   // Si no hay barcode, usar placeholder de Lorem Picsum
   if (!barcode || !PRODUCT_IMAGES[barcode]) {
-    console.log('⚠️ No barcode or not found, using Lorem Picsum');
     return `https://picsum.photos/seed/${productId}/400/300`;
   }
 
   const imageData = PRODUCT_IMAGES[barcode];
-  console.log('✅ Using local image:', imageData.localPath);
 
   // Retornar la ruta local (si existe) o el fallback
   // El navegador intentará cargar desde public/ automáticamente

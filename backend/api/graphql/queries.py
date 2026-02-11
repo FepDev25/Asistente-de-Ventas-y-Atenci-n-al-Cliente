@@ -14,16 +14,20 @@ from strawberry.types import Info
 from backend.config.security import securityJWT
 
 from backend.api.graphql.types import (
-    ProductStockType, 
+    ProductStockType,
     SemanticSearchResponse,
     UserType,
     OrderType,
-    OrderSummaryType
+    OrderSummaryType,
+    ChatMessageType,
+    ChatHistoryResponse,
+    ChatSessionType
 )
 from backend.services.product_service import ProductService
 from backend.services.order_service import OrderService
 from backend.services.search_service import SearchService
 from backend.services.user_service import UserService
+from backend.services.chat_history_service import ChatHistoryService
 
 
 def extract_token_from_request(info: Info) -> Optional[str]:
@@ -292,6 +296,169 @@ class BusinessQuery:
                 query=query,
                 error="internal_error"
             )
+
+    # ========================================================================
+    # HISTORIAL DE CHAT
+    # ========================================================================
+
+    @strawberry.field
+    @inject
+    async def get_chat_history(
+        self,
+        session_id: str,
+        info: Info,
+        chat_history_service: Annotated[ChatHistoryService, Inject],
+        limit: int = 100,
+        offset: int = 0
+    ) -> ChatHistoryResponse:
+        """
+        Obtiene el historial de mensajes de una sesión de chat.
+
+        Requiere autenticación. Solo retorna mensajes del usuario autenticado.
+
+        Args:
+            session_id: ID de la sesión de chat
+            limit: Número máximo de mensajes (default: 100)
+            offset: Desplazamiento para paginación (default: 0)
+
+        Returns:
+            ChatHistoryResponse con mensajes y metadata de paginación
+
+        Example query:
+            query {
+                getChatHistory(sessionId: "sess_123", limit: 50) {
+                    messages {
+                        id role message createdAt metadata orderId
+                    }
+                    total
+                    hasMore
+                }
+            }
+        """
+        current_user = get_current_user(info)
+        if not current_user:
+            logger.warning("Usuario no autenticado intentó acceder al historial")
+            return ChatHistoryResponse(
+                messages=[],
+                total=0,
+                session_id=session_id,
+                has_more=False
+            )
+
+        logger.info(
+            f"Obteniendo historial: session={session_id}, user={current_user.get('username')}, "
+            f"limit={limit}, offset={offset}"
+        )
+
+        try:
+            messages, total = await chat_history_service.get_session_messages(
+                session_id=session_id,
+                limit=limit,
+                offset=offset,
+                user_id=current_user["id"]
+            )
+
+            # Convertir a tipos GraphQL
+            message_types = [
+                ChatMessageType(
+                    id=msg.id,
+                    session_id=msg.session_id,
+                    role=msg.role,
+                    message=msg.message,
+                    created_at=msg.created_at,
+                    metadata=msg.metadata_json,
+                    order_id=msg.order_id
+                )
+                for msg in messages
+            ]
+
+            has_more = (offset + len(messages)) < total
+
+            logger.info(
+                f"Historial recuperado: {len(messages)} mensajes de {total} totales "
+                f"(has_more={has_more})"
+            )
+
+            return ChatHistoryResponse(
+                messages=message_types,
+                total=total,
+                session_id=session_id,
+                has_more=has_more
+            )
+
+        except Exception as e:
+            logger.error(f"Error obteniendo historial de chat: {e}", exc_info=True)
+            return ChatHistoryResponse(
+                messages=[],
+                total=0,
+                session_id=session_id,
+                has_more=False
+            )
+
+    @strawberry.field
+    @inject
+    async def get_user_conversations(
+        self,
+        info: Info,
+        chat_history_service: Annotated[ChatHistoryService, Inject],
+        limit: int = 10
+    ) -> List[ChatSessionType]:
+        """
+        Lista las conversaciones (sesiones de chat) del usuario autenticado.
+
+        Requiere autenticación. Retorna resumen de cada sesión ordenadas
+        por fecha del último mensaje (más recientes primero).
+
+        Args:
+            limit: Número máximo de conversaciones (default: 10)
+
+        Returns:
+            Lista de ChatSessionType con información resumida de cada sesión
+
+        Example query:
+            query {
+                getUserConversations(limit: 5) {
+                    sessionId
+                    messageCount
+                    lastMessage
+                    lastTimestamp
+                }
+            }
+        """
+        current_user = get_current_user(info)
+        if not current_user:
+            logger.warning("Usuario no autenticado intentó listar conversaciones")
+            return []
+
+        logger.info(
+            f"Listando conversaciones: user={current_user.get('username')}, limit={limit}"
+        )
+
+        try:
+            conversations = await chat_history_service.get_user_conversations(
+                user_id=current_user["id"],
+                limit=limit
+            )
+
+            # Convertir a tipos GraphQL
+            session_types = [
+                ChatSessionType(
+                    session_id=conv["session_id"],
+                    user_id=conv["user_id"],
+                    message_count=conv["message_count"],
+                    last_message=conv["last_message"],
+                    last_timestamp=conv["last_timestamp"]
+                )
+                for conv in conversations
+            ]
+
+            logger.info(f"Conversaciones listadas: {len(session_types)}")
+
+            return session_types
+
+        except Exception as e:
+            logger.error(f"Error listando conversaciones: {e}", exc_info=True)
+            return []
 
 
 # Importación tardía para evitar circular imports

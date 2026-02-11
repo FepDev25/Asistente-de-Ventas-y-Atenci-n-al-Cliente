@@ -53,19 +53,13 @@ interface CartItem {
 const ChatBot: React.FC = () => {
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Agregar productos al carrito\n- Realizar pedidos\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
-      sender: 'bot',
-      timestamp: new Date(),
-      status: 'sent'
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showRagDocs, setShowRagDocs] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   
   // Estados para el carrito y checkout
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -134,6 +128,102 @@ const ChatBot: React.FC = () => {
       }
     }
   }, [messages, isOpen]);
+
+  // Cargar historial de chat al iniciar
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      if (historyLoaded) return;
+
+      const token = authService.getToken();
+
+      // Si no hay token, mostrar mensaje de bienvenida
+      if (!token) {
+        setMessages([{
+          id: '1',
+          text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Agregar productos al carrito\n- Realizar pedidos\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
+          sender: 'bot',
+          timestamp: new Date(),
+          status: 'sent'
+        }]);
+        setHistoryLoaded(true);
+        return;
+      }
+
+      setIsLoadingHistory(true);
+
+      try {
+        const { messages: historicalMessages } = await chatService.getChatHistory(
+          chatService.getSessionId(),
+          50
+        );
+
+        if (historicalMessages.length > 0) {
+          const formattedMessages: Message[] = historicalMessages.map(msg => ({
+            id: msg.id,
+            text: msg.message,
+            sender: msg.role === 'USER' ? 'user' : 'bot',
+            timestamp: new Date(msg.createdAt),
+            status: 'sent'
+          }));
+
+          setMessages(formattedMessages);
+
+          // Restaurar estado de guionFlow si el último mensaje es de guion
+          const lastAgentMessage = historicalMessages
+            .filter(m => m.role === 'AGENT')
+            .reverse()[0];
+
+          if (lastAgentMessage && lastAgentMessage.metadata) {
+            try {
+              const metadata = JSON.parse(lastAgentMessage.metadata);
+
+              // Si tiene mejor_opcion_id y siguiente_paso, es un flujo de guion activo
+              if (metadata.mejor_opcion_id && metadata.siguiente_paso) {
+                const siguientePaso = metadata.siguiente_paso;
+
+                // Solo restaurar si el flujo NO ha terminado
+                if (siguientePaso !== 'nueva_conversacion' && siguientePaso !== 'orden_completada') {
+                  setGuionFlow({
+                    active: true,
+                    mejorOpcionId: metadata.mejor_opcion_id,
+                    sessionId: chatService.getSessionId()
+                  });
+                  console.log('✅ Flujo de guion restaurado:', {
+                    mejorOpcionId: metadata.mejor_opcion_id,
+                    siguientePaso: siguientePaso
+                  });
+                }
+              }
+            } catch (e) {
+              // Metadata no es JSON válido, ignorar
+            }
+          }
+        } else {
+          setMessages([{
+            id: '1',
+            text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Agregar productos al carrito\n- Realizar pedidos\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
+            sender: 'bot',
+            timestamp: new Date(),
+            status: 'sent'
+          }]);
+        }
+      } catch (error) {
+        console.error('Error cargando historial:', error);
+        setMessages([{
+          id: '1',
+          text: '¡Hola! Soy **Alex**, tu asistente de ventas. 👋\n\nEstoy aquí para ayudarte con:\n- Información de productos\n- Recomendaciones personalizadas\n- Agregar productos al carrito\n- Realizar pedidos\n- Preguntas sobre envíos y pagos\n\n¿En qué puedo ayudarte hoy?',
+          sender: 'bot',
+          timestamp: new Date(),
+          status: 'sent'
+        }]);
+      } finally {
+        setIsLoadingHistory(false);
+        setHistoryLoaded(true);
+      }
+    };
+
+    loadChatHistory();
+  }, []);
 
   // Calcular total del carrito
   const cartTotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
@@ -835,6 +925,7 @@ const ChatBot: React.FC = () => {
     ]);
     setCheckoutFlow({ active: false, step: null });
     setGuionFlow({ active: false });
+    setHistoryLoaded(false);  // Resetear para permitir cargar historial de nueva sesión
     resetOrderState();
   };
 
@@ -927,7 +1018,7 @@ const ChatBot: React.FC = () => {
               title={showRagDocs ? 'Ocultar docs RAG' : 'Mostrar docs RAG'}
               aria-label="Toggle RAG docs"
             >
-              <FiFileText size={18} />
+              📄
             </button>
             <button
               className="icon-button"
@@ -935,14 +1026,14 @@ const ChatBot: React.FC = () => {
               title="Nueva conversación"
               aria-label="Nueva conversación"
             >
-              <FiRefreshCw size={18} />
+              🔄
             </button>
             <button
               className="close-chat-btn"
               onClick={toggleChat}
               aria-label="Cerrar chat"
             >
-              <FiX size={20} />
+              ✖️
             </button>
           </div>
         </div>
@@ -1007,6 +1098,12 @@ const ChatBot: React.FC = () => {
           role="log"
           aria-live="polite"
         >
+          {isLoadingHistory && (
+            <div className="loading-history">
+              <div className="loading-spinner"></div>
+              <p>Cargando historial...</p>
+            </div>
+          )}
           {messages.map((message, index) => (
             <div key={message.id}>
               {/* Message Bubble */}

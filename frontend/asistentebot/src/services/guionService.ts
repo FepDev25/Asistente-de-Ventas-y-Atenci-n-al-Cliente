@@ -123,17 +123,24 @@ export class GuionService {
   private sessionId: string;
 
   constructor() {
+    // Limpiar session_id antiguo de guion (migración)
+    if (localStorage.getItem('guion_session_id')) {
+      localStorage.removeItem('guion_session_id');
+    }
+
     this.sessionId = this.getOrCreateSessionId();
   }
 
   /**
-   * Genera o recupera session ID único para el flujo de guion
+   * Genera o recupera session ID único para el flujo de guion.
+   * IMPORTANTE: Usa el mismo session_id que chatService para unificar historial.
    */
   private getOrCreateSessionId(): string {
-    let sessionId = localStorage.getItem('guion_session_id');
+    // Usar el mismo session_id que chatService
+    let sessionId = localStorage.getItem('chat_session_id');
     if (!sessionId) {
-      sessionId = `sess-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-      localStorage.setItem('guion_session_id', sessionId);
+      sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      localStorage.setItem('chat_session_id', sessionId);
     }
     return sessionId;
   }
@@ -142,7 +149,8 @@ export class GuionService {
    * Resetea la sesión actual (útil para nueva conversación)
    */
   resetSession(): void {
-    localStorage.removeItem('guion_session_id');
+    // Resetear el mismo session_id que chatService
+    localStorage.removeItem('chat_session_id');
     this.sessionId = this.getOrCreateSessionId();
   }
 
