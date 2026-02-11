@@ -47,68 +47,37 @@ El proyecto implementa un flujo completo de conversación desde la consulta inic
 
 ### Diagrama de Flujo del Agente Multi-Nivel
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    USUARIO (Frontend React)                      │
-│  - Interfaz de chat                                             │
-│  - Entrada de texto/voz                                         │
-│  - Reproducción de audio                                        │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │ GraphQL Query/Mutation
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   CAPA DE API (FastAPI + GraphQL)               │
-│  - Endpoint: /graphql                                           │
-│  - Autenticación JWT                                            │
-│  - Validación de entrada                                        │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              ORQUESTADOR DE AGENTES (AgentOrchestrator)         │
-│  - Análisis de intención del usuario                           │
-│  - Enrutamiento a agente especializado                          │
-│  - Gestión de contexto de conversación                          │
-└──────────┬──────────────────────────────────┬───────────────────┘
-           │                                  │
-           │                                  │
-    ┌──────▼──────┐                    ┌─────▼──────┐
-    │  AGENTE 1:  │                    │ AGENTE 2:  │
-    │  RETRIEVER  │                    │   SALES    │
-    │             │                    │            │
-    │ - RAG       │                    │ - Product  │
-    │ - FAQs      │                    │   Compare  │
-    │ - Policies  │                    │ - Recom.   │
-    └──────┬──────┘                    └─────┬──────┘
-           │                                  │
-           │         ┌────────────────────────┘
-           │         │
-           ▼         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    SERVICIOS ESPECIALIZADOS                      │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐      │
-│  │ RAGService   │  │ProductService│  │ElevenLabsService│      │
-│  │              │  │              │  │                 │      │
-│  │ - FAISS      │  │ - DB Queries │  │ - TTS          │      │
-│  │ - Embeddings │  │ - Pricing    │  │ - Voice Synth  │      │
-│  └──────┬───────┘  └──────┬───────┘  └────────┬────────┘      │
-│         │                  │                    │               │
-└─────────┼──────────────────┼────────────────────┼───────────────┘
-          │                  │                    │
-          ▼                  ▼                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   CAPA DE PERSISTENCIA                           │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐      │
-│  │ PostgreSQL   │  │    Redis     │  │  ElevenLabs     │      │
-│  │ + pgvector   │  │   (Cache)    │  │    API          │      │
-│  │              │  │              │  │                 │      │
-│  │ - Products   │  │ - Sessions   │  │ - Audio Gen     │      │
-│  │ - Orders     │  │ - Context    │  │ - Voice Models  │      │
-│  │ - Chat Hist. │  │              │  │                 │      │
-│  └──────────────┘  └──────────────┘  └─────────────────┘      │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    A[USUARIO - Frontend React<br/>- Interfaz de chat<br/>- Entrada de texto/voz<br/>- Reproducción de audio] -->|GraphQL Query/Mutation| B[CAPA DE API - FastAPI + GraphQL<br/>- Endpoint: /graphql<br/>- Autenticación JWT<br/>- Validación de entrada]
+
+    B --> C[ORQUESTADOR DE AGENTES<br/>AgentOrchestrator<br/>- Análisis de intención<br/>- Enrutamiento a agente<br/>- Gestión de contexto]
+
+    C --> D[AGENTE 1: RETRIEVER<br/>- RAG<br/>- FAQs<br/>- Policies]
+    C --> E[AGENTE 2: SALES<br/>- Product Compare<br/>- Recommendations]
+
+    D --> F[SERVICIOS ESPECIALIZADOS]
+    E --> F
+
+    F --> G[RAGService<br/>- FAISS<br/>- Embeddings]
+    F --> H[ProductService<br/>- DB Queries<br/>- Pricing]
+    F --> I[ElevenLabsService<br/>- TTS<br/>- Voice Synth]
+
+    G --> J[CAPA DE PERSISTENCIA]
+    H --> J
+    I --> J
+
+    J --> K[PostgreSQL + pgvector<br/>- Products<br/>- Orders<br/>- Chat History]
+    J --> L[Redis Cache<br/>- Sessions<br/>- Context]
+    J --> M[ElevenLabs API<br/>- Audio Gen<br/>- Voice Models]
+
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style C fill:#ffe1f5
+    style D fill:#e1ffe1
+    style E fill:#e1ffe1
+    style F fill:#f5e1ff
+    style J fill:#ffe1e1
 ```
 
 ### Explicación del Flujo de Procesamiento
@@ -168,47 +137,38 @@ El frontend recibe:
 
 ## Flujo de Conversación Completa (Ejemplo)
 
-```
-Usuario: "Quiero unas Nike Air Max baratas"
-           │
-           ▼
-    [GraphQL Query]
-           │
-           ▼
-    [AgentOrchestrator]
-    Intención: COMPRA + COMPARACIÓN
-           │
-           ▼
-    [SalesAgent]
-    - Busca productos: brand="Nike", model="Air Max"
-    - Ordena por precio ascendente
-    - Compara top 3 opciones
-           │
-           ▼
-    [ProductComparisonService]
-    - Calcula scoring de relevancia
-    - Genera reasoning con LLM
-    - Identifica mejor opción
-           │
-           ▼
-    [ElevenLabsService]
-    - Genera audio de respuesta
-    - Codifica en Base64
-           │
-           ▼
-    [Response GraphQL]
-    {
-      mensaje: "Comparé 3 opciones de Nike Air Max...",
-      productos: [...],
-      mejorOpcionId: "uuid-...",
-      audioUrl: "data:audio/mpeg;base64,..."
-    }
-           │
-           ▼
-    [Frontend]
-    - Renderiza comparación
-    - Reproduce audio
-    - Muestra botón "Confirmar compra"
+```mermaid
+sequenceDiagram
+    participant U as Usuario
+    participant F as Frontend
+    participant API as GraphQL API
+    participant O as AgentOrchestrator
+    participant SA as SalesAgent
+    participant PC as ProductComparison<br/>Service
+    participant EL as ElevenLabs<br/>Service
+
+    U->>F: "Quiero unas Nike Air Max baratas"
+    F->>API: GraphQL Query
+    API->>O: Analizar intención
+    Note over O: Intención: COMPRA + COMPARACIÓN
+    O->>SA: Enrutar a SalesAgent
+
+    Note over SA: - Busca: brand="Nike", model="Air Max"<br/>- Ordena por precio ascendente<br/>- Compara top 3 opciones
+
+    SA->>PC: Comparar productos
+    Note over PC: - Calcula scoring<br/>- Genera reasoning con LLM<br/>- Identifica mejor opción
+    PC-->>SA: Resultados de comparación
+
+    SA->>EL: Generar audio de respuesta
+    Note over EL: - Convierte texto a voz<br/>- Codifica en Base64
+    EL-->>SA: Audio URL
+
+    SA-->>API: Respuesta completa
+    Note over API: {<br/>  mensaje: "Comparé 3 opciones...",<br/>  productos: [...],<br/>  mejorOpcionId: "uuid",<br/>  audioUrl: "data:audio/mpeg;base64..."<br/>}
+
+    API-->>F: Response GraphQL
+    F->>F: - Renderiza comparación<br/>- Reproduce audio<br/>- Muestra "Confirmar compra"
+    F-->>U: Respuesta visual + audio
 ```
 
 ## Métricas de Calidad
@@ -373,6 +333,175 @@ docker-compose logs -f
 # Detener servicios
 docker-compose down
 ```
+
+## Despliegue en Google Cloud Platform
+
+El sistema está desplegado en producción en Google Cloud Platform (GCP), proporcionando acceso público a través de una instancia de Compute Engine.
+
+### Información del Despliegue
+
+| Componente | Detalles |
+|------------|----------|
+| **Proveedor Cloud** | Google Cloud Platform (GCP) |
+| **Región** | us-central1 (Iowa, USA) |
+| **Zona** | us-central1-a |
+| **Tipo de Instancia** | e2-small (2 vCPUs, 2GB RAM) |
+| **Sistema Operativo** | Ubuntu 22.04 LTS |
+| **IP Pública** | 34.44.205.241 |
+| **Containerización** | Docker + Docker Compose |
+
+### URLs de Acceso Público
+
+- **Frontend (Aplicación Web)**: http://34.44.205.241:3000
+- **Backend API**: http://34.44.205.241:8000
+- **GraphQL Playground**: http://34.44.205.241:8000/graphql
+- **API Documentation**: http://34.44.205.241:8000/docs
+- **Health Check**: http://34.44.205.241:8000/health
+
+### Arquitectura de Despliegue
+
+```mermaid
+graph TB
+    Internet[Internet Público]
+
+    subgraph GCP[Google Cloud Platform - GCP]
+        subgraph VM[Compute Engine VM e2-small<br/>IP: 34.44.205.241<br/>Ubuntu 22.04]
+            subgraph Docker[Docker Compose Stack]
+                subgraph Services[Servicios Backend]
+                    PostgreSQL[(PostgreSQL<br/>+ pgvector<br/>:5432)]
+                    Redis[(Redis<br/>Cache<br/>:6379)]
+                    Backend[Backend<br/>FastAPI<br/>:8000]
+                end
+
+                Frontend[Frontend React<br/>Nginx<br/>:3000]
+            end
+        end
+
+        Firewall[Firewall Rules<br/>Puertos: 3000, 8000]
+    end
+
+    Internet -->|HTTPS/HTTP| Firewall
+    Firewall --> Frontend
+    Firewall --> Backend
+
+    Frontend -.->|API Calls| Backend
+    Backend -->|Queries| PostgreSQL
+    Backend -->|Cache| Redis
+
+    style GCP fill:#e8f4f8
+    style VM fill:#fff4e6
+    style Docker fill:#f0f0f0
+    style Services fill:#e6f3ff
+    style Frontend fill:#e6ffe6
+    style Backend fill:#ffe6e6
+    style PostgreSQL fill:#e6e6ff
+    style Redis fill:#ffe6f0
+    style Firewall fill:#fff0e6
+    style Internet fill:#f5f5f5
+```
+
+### Servicios Desplegados
+
+Todos los servicios se ejecutan como contenedores Docker orquestados mediante Docker Compose:
+
+1. **PostgreSQL 15 + pgvector** (Puerto 5432)
+   - Base de datos relacional con soporte de embeddings vectoriales
+   - Almacena productos, órdenes, usuarios y historial de chat
+   - Volumen persistente para durabilidad de datos
+
+2. **Redis 7** (Puerto 6379)
+   - Sistema de caché en memoria
+   - Gestión de sesiones y contexto conversacional
+   - Rate limiting y control de concurrencia
+
+3. **Backend FastAPI** (Puerto 8000)
+   - API GraphQL principal
+   - Integración con Vertex AI (Gemini) para procesamiento de lenguaje natural
+   - Servicio de Text-to-Speech con ElevenLabs
+   - Autenticación JWT
+
+4. **Frontend React** (Puerto 3000)
+   - Aplicación web servida por Nginx
+   - Build optimizado para producción
+   - Enrutamiento del lado del cliente (SPA)
+
+### Credenciales de Prueba
+
+Para acceder al sistema desplegado, puede utilizar las siguientes credenciales de demostración:
+
+| Tipo de Usuario | Username | Password | Permisos |
+|-----------------|----------|----------|----------|
+| Administrador | `admin` | `admin123` | Gestión completa del sistema |
+| Cliente | `Cliente1` | `cliente123` | Consultas y compras |
+
+### Guía de Operaciones
+
+Para tareas de mantenimiento, monitoreo y troubleshooting del despliegue en producción, consulte la documentación completa:
+
+**[Guía Completa de Despliegue y Operaciones](./documents/DEPLOYMENT.md)**
+
+Este documento incluye:
+- Comandos de conexión SSH a la VM
+- Gestión de contenedores Docker
+- Visualización de logs (especialmente backend)
+- Reinicio de servicios
+- Debugging y troubleshooting
+- Procedimientos de actualización
+- Backup y recuperación de datos
+
+### Costos de Operación
+
+| Recurso | Costo Mensual Estimado |
+|---------|------------------------|
+| Compute Engine e2-small | ~$13.00 |
+| Disco persistente SSD (30GB) | ~$1.50 |
+| Tráfico de red (estimado) | ~$2.00 |
+| **Subtotal GCP** | **~$16.50/mes** |
+| Vertex AI (Gemini) | ~$8.00 |
+| ElevenLabs API | ~$5.00 |
+| **Total Operativo** | **~$29.50/mes** |
+
+> **Nota**: Los créditos gratuitos de GCP ($300 durante 90 días) cubren estos costos durante el período de evaluación del proyecto académico.
+
+### Monitoreo y Salud del Sistema
+
+El sistema incluye varios endpoints para monitoreo:
+
+```bash
+# Health check general
+curl http://34.44.205.241:8000/health
+
+# Información de rate limits
+curl http://34.44.205.241:8000/rate-limits
+
+# Endpoint raíz con información del sistema
+curl http://34.44.205.241:8000/
+```
+
+### Seguridad
+
+- **Firewall**: Configurado para permitir solo puertos 3000 (frontend) y 8000 (backend)
+- **Autenticación**: JWT con expiración de 24 horas
+- **CORS**: Configurado para permitir solo orígenes específicos
+- **Rate Limiting**: Límites configurados para prevenir abuso:
+  - GraphQL: 60 requests/minuto por usuario
+  - Login: 10 intentos/minuto por IP
+  - Health check: 100 requests/minuto
+
+### Escalabilidad
+
+La configuración actual soporta:
+- **Usuarios simultáneos**: ~50 conexiones concurrentes
+- **Throughput**: ~120 requests/minuto
+- **Almacenamiento**: 30GB (expansible según necesidad)
+
+Para escalar el sistema:
+1. **Vertical**: Aumentar el tipo de instancia (e2-medium, e2-standard-2)
+2. **Horizontal**: Implementar load balancer con múltiples instancias
+3. **Base de datos**: Migrar a Cloud SQL para PostgreSQL gestionado
+4. **Cache**: Migrar a Memorystore para Redis gestionado
+
+---
 
 ## Uso del Sistema
 
