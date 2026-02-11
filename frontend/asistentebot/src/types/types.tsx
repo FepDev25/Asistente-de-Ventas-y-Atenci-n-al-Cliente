@@ -26,6 +26,7 @@ export interface Message {
   text: string;
   sender: 'user' | 'bot';
   timestamp: Date;
+  audioUrl?: string;  // URL del audio (data URL o /audio/{id})
 }
 
 export interface AuthContextType {

@@ -24,6 +24,7 @@ export interface SemanticSearchResult {
   answer: string;
   query: string;
   error: string | null;
+  audioUrl?: string;
 }
 
 export interface Product {
@@ -115,6 +116,7 @@ export class ChatService {
           answer
           query
           error
+          audioUrl
         }
       }
     `;
@@ -419,13 +421,14 @@ export class RAGService {
    * devuelve solo `answer`. Si tu backend expone una query REST/GraphQL distinta para RAG docs,
    * actualiza la query/endpoint aquí.
    */
-  async semanticSearch(query: string, sessionId?: string): Promise<{ answer: string; query: string; error: string | null }> {
+  async semanticSearch(query: string, sessionId?: string): Promise<{ answer: string; query: string; error: string | null; audioUrl?: string }> {
     const q = `
       query Semantic($q: String!, $sessionId: String) {
         semanticSearch(query: $q, sessionId: $sessionId) {
           answer
           query
           error
+          audioUrl
         }
       }
     `;

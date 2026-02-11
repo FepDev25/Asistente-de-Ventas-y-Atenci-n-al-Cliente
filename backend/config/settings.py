@@ -24,6 +24,16 @@ class BusinessSettings(BaseSettings):
     # Flags del sistema
     log_level: str = "INFO"
 
+    # ElevenLabs TTS
+    elevenlabs_api_key: str | None = Field(
+        default=None,
+        alias="ELEVENLABS_API_KEY"
+    )
+    elevenlabs_voice_id: str = Field(
+        default="pNInz6obpgDQGcFmaJgB",  # Adam (default)
+        alias="ELEVENLABS_VOICE_ID"
+    )
+
     # Configuración de carga
     model_config = SettingsConfigDict(
         env_file=(".env", "backend/.env.dev", ".env.dev"),

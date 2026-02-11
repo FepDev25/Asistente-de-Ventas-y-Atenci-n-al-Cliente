@@ -28,6 +28,7 @@ from backend.services.order_service import OrderService
 from backend.services.search_service import SearchService
 from backend.services.user_service import UserService
 from backend.services.chat_history_service import ChatHistoryService
+from backend.services.elevenlabs_service import ElevenLabsService
 
 
 def extract_token_from_request(info: Info) -> Optional[str]:
@@ -208,6 +209,7 @@ class BusinessQuery:
         self,
         query: str,
         search_service: Annotated[SearchService, Inject],
+        elevenlabs_service: Annotated["ElevenLabsService", Inject],
         info: Info,
         session_id: str | None = None
     ) -> SemanticSearchResponse:
@@ -240,17 +242,28 @@ class BusinessQuery:
         try:
             result = await asyncio.wait_for(
                 search_service.semantic_search(
-                    query, 
+                    query,
                     session_id=session_id,
                     user_id=user.get('id')  # ✅ BUGFIX: Pasar user_id autenticado
                 ),
                 timeout=30.0
             )
 
+            # Generar audio de la respuesta
+            audio_url = None
+            try:
+                audio_bytes = await elevenlabs_service.text_to_speech(result.answer)
+                if audio_bytes:
+                    audio_url = elevenlabs_service.audio_to_data_url(audio_bytes)
+                    logger.info(f"🔊 Audio generado para semantic_search (tamaño: {len(audio_bytes)} bytes)")
+            except Exception as audio_err:
+                logger.warning(f"⚠️ Error generando audio: {type(audio_err).__name__}: {audio_err}", exc_info=True)
+
             return SemanticSearchResponse(
                 answer=result.answer,
                 query=query,
-                error=None
+                error=None,
+                audio_url=audio_url
             )
 
         except asyncio.TimeoutError:

@@ -23,6 +23,7 @@ from backend.services.rag_service import RAGService
 from backend.services.session_service import SessionService, create_redis_client
 from backend.services.user_service import UserService
 from backend.services.chat_history_service import ChatHistoryService
+from backend.services.elevenlabs_service import ElevenLabsService
 from backend.config.redis_config import RedisSettings, get_redis_settings
 from backend.agents.retriever_agent import RetrieverAgent
 from backend.agents.sales_agent import SalesAgent
@@ -71,6 +72,11 @@ async def create_llm_provider_instance() -> LLMProvider:
 async def create_rag_service() -> RAGService:
     """Fabrica el servicio RAG (búsqueda semántica)."""
     return RAGService()
+
+
+async def create_elevenlabs_service() -> ElevenLabsService:
+    """Fabrica el servicio de Text-to-Speech."""
+    return ElevenLabsService()
 
 
 # === Redis y Sesiones ===
@@ -198,6 +204,7 @@ def providers() -> Iterable[aioinject.Provider[Any]]:
     # 3. Servicios de IA
     providers_list.append(aioinject.Singleton(create_llm_provider_instance))
     providers_list.append(aioinject.Singleton(create_rag_service))
+    providers_list.append(aioinject.Singleton(create_elevenlabs_service))
     providers_list.append(aioinject.Singleton(create_search_service))
 
     # 4. Sistema Multi-Agente

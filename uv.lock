@@ -818,6 +818,23 @@ wheels = [
 ]
 
 [[package]]
+name = "elevenlabs"
+version = "2.35.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a0/d6/9093a2de3635b6e602fe9f16c9a8ed17ffcbb33867329458a66ff53b6441/elevenlabs-2.35.0.tar.gz", hash = "sha256:7276ef1f928c51fa623c9de90ea0675fc69460046b52eab4ae510a437e18fea6", size = 480467, upload-time = "2026-02-09T11:33:40.626Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/e8/d4169d78dc1d5dcd4d6e3670af94087cd4e37966af40c6b9379f567d251b/elevenlabs-2.35.0-py3-none-any.whl", hash = "sha256:e27be0ccafccc46f619a6e29b04054a3e668ac32e68fe69616d7768e79c7f9e4", size = 1285085, upload-time = "2026-02-09T11:33:38.667Z" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3098,6 +3115,7 @@ dependencies = [
     { name = "aioinject" },
     { name = "asyncpg" },
     { name = "chromadb" },
+    { name = "elevenlabs" },
     { name = "email-validator" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -3140,6 +3158,7 @@ requires-dist = [
     { name = "aioinject", specifier = ">=1.10.2" },
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "chromadb", specifier = ">=1.4.1" },
+    { name = "elevenlabs", specifier = ">=2.35.0" },
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.128.0" },
     { name = "httpx", specifier = ">=0.28.1" },

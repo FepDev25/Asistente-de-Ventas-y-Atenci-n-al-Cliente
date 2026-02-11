@@ -6,6 +6,7 @@ import { chatService, ragService, authService } from '../services/graphqlservice
 import { guionService } from '../services/guionService';
 import { useOrderCreation } from '../services/userordercreation';
 import type { SemanticSearchResult, RAGDoc } from '../services/graphqlservices';
+import { AudioPlayer } from '../components/AudioPlayer';
 import './chatbot.css';
 import {
   FiMessageCircle,
@@ -29,6 +30,7 @@ interface Message {
   error?: string | null;
   ragDocs?: RAGDoc[];
   status?: 'sending' | 'sent' | 'error';
+  audioUrl?: string;  // URL del audio
   metadata?: {
     type?: 'order_confirmation' | 'order_created' | 'error' | 'cart_updated';
     order_id?: string;
@@ -228,14 +230,15 @@ const ChatBot: React.FC = () => {
   // Calcular total del carrito
   const cartTotal = cart.reduce((sum, item) => sum + (item.unit_price * item.quantity), 0);
 
-  const addMessage = (text: string, sender: 'user' | 'bot', metadata?: any) => {
+  const addMessage = (text: string, sender: 'user' | 'bot', metadata?: any, audioUrl?: string) => {
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random()}`,
       text,
       sender,
       timestamp: new Date(),
       status: 'sent',
-      metadata
+      metadata,
+      audioUrl
     };
     setMessages(prev => [...prev, newMessage]);
   };
@@ -508,7 +511,7 @@ const ChatBot: React.FC = () => {
         mensaje += '\n¿Te interesa este producto? Responde **"sí"** o **"no"**.';
       }
 
-      addMessage(mensaje, 'bot');
+      addMessage(mensaje, 'bot', undefined, response.audioUrl);
       setIsTyping(false);
 
     } catch (error) {
@@ -566,13 +569,13 @@ const ChatBot: React.FC = () => {
       } else if (response.siguientePaso === 'confirmar_compra') {
         // Hay alternativa
         mensaje += '\n\n¿Te interesa esta opción? Responde **"sí"** o **"no"**.';
-        setGuionFlow(prev => ({ 
-          ...prev, 
-          mejorOpcionId: response.mejorOpcionId 
+        setGuionFlow(prev => ({
+          ...prev,
+          mejorOpcionId: response.mejorOpcionId
         }));
       }
 
-      addMessage(mensaje, 'bot');
+      addMessage(mensaje, 'bot', undefined, response.audioUrl);
       setIsTyping(false);
 
     } catch (error) {
@@ -804,7 +807,8 @@ const ChatBot: React.FC = () => {
           timestamp: new Date(),
           error: response.error,
           ragDocs: ragDocs.length > 0 ? ragDocs : undefined,
-          status: 'sent'
+          status: 'sent',
+          audioUrl: response.audioUrl
         };
 
         setMessages(prev => [...prev, botMessage]);
@@ -1147,8 +1151,16 @@ const ChatBot: React.FC = () => {
                     <p>{message.text}</p>
                   )}
 
+                  {/* Reproducir audio si está disponible (solo para bot) */}
+                  {message.sender === 'bot' && message.audioUrl && (
+                    <AudioPlayer
+                      audioUrl={message.audioUrl}
+                      autoPlay={true}
+                      onError={(err) => console.error('Error reproduciendo audio:', err)}
+                    />
+                  )}
+
                   {/* Botón especial para ver orden creada */}
-                                    {/* Botón especial para ver orden creada */}
                   {message.metadata?.type === 'order_created' && message.metadata?.order_id && (
                     <button
                       className="view-order-button"

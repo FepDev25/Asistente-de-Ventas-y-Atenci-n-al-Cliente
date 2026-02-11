@@ -78,6 +78,7 @@ export interface RecomendacionResponse {
   mejorOpcionId: string;
   reasoning: string;
   siguientePaso: 'confirmar_compra' | 'solicitar_datos_envio' | 'ir_a_checkout' | 'nueva_conversacion';
+  audioUrl?: string;
 }
 
 export interface ContinuarConversacionResponse {
@@ -85,6 +86,7 @@ export interface ContinuarConversacionResponse {
   mensaje: string;
   mejorOpcionId?: string;
   siguientePaso: 'confirmar_compra' | 'solicitar_datos_envio' | 'ir_a_checkout' | 'nueva_conversacion';
+  audioUrl?: string;
 }
 
 // helper para incluir token de autenticación en headers
@@ -190,6 +192,7 @@ export class GuionService {
           mejorOpcionId
           reasoning
           siguientePaso
+          audioUrl
         }
       }
     `;
@@ -243,6 +246,7 @@ export class GuionService {
           mensaje
           mejorOpcionId
           siguientePaso
+          audioUrl
         }
       }
     `;

@@ -131,6 +131,7 @@ class RecomendacionResponse:
     mejor_opcion_id: UUID
     reasoning: str
     siguiente_paso: str
+    audio_url: Optional[str] = None
 
 
 # ============================================================================
@@ -231,6 +232,7 @@ class SemanticSearchResponse:
     answer: str
     query: str
     error: Optional[str] = None
+    audio_url: Optional[str] = None
 
 
 @strawberry.type
@@ -275,6 +277,7 @@ class ContinuarConversacionResponse:
     order_number: Optional[str] = None
     order_total: Optional[Decimal] = None
     order_status: Optional[str] = None
+    audio_url: Optional[str] = None
 
 
 # ============================================================================

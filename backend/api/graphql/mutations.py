@@ -38,6 +38,7 @@ from backend.services.product_service import ProductService
 from backend.services.product_comparison_service import ProductComparisonService
 from backend.services.session_service import SessionService
 from backend.services.chat_history_service import ChatHistoryService
+from backend.services.elevenlabs_service import ElevenLabsService
 from backend.llm.provider import LLMProvider
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.domain.order_schemas import OrderCreate, OrderDetailCreate
@@ -260,6 +261,7 @@ class BusinessMutation:
         session_service: Annotated[SessionService, Inject],
         chat_history_service: Annotated["ChatHistoryService", Inject],
         session_factory: Annotated[async_sessionmaker[AsyncSession], Inject],
+        elevenlabs_service: Annotated[ElevenLabsService, Inject],
     ) -> RecomendacionResponse:
         """
         Procesa un guion del Agente 2 y genera una recomendación.
@@ -576,9 +578,20 @@ class BusinessMutation:
                 except Exception as persist_err:
                     logger.warning(f"No se pudo persistir conversación: {persist_err}")
 
+            # 9. Generar audio del mensaje (si ElevenLabs está habilitado)
+            audio_url = None
+            try:
+                audio_bytes = await elevenlabs_service.text_to_speech(mensaje_completo)
+                if audio_bytes:
+                    audio_url = elevenlabs_service.audio_to_data_url(audio_bytes)
+                    logger.info(f"🔊 Audio generado para guion (tamaño: {len(audio_bytes)} bytes)")
+            except Exception as audio_err:
+                logger.warning(f"⚠️ No se pudo generar audio: {audio_err}")
+
             logger.info("✅ FLUJO COMPLETADO EXITOSAMENTE")
             logger.info(f"   • Siguiente paso: {siguiente_paso}")
             logger.info(f"   • Mensaje generado para usuario ({len(mensaje_completo)} caracteres)")
+            logger.info(f"   • Audio generado: {'Sí' if audio_url else 'No'}")
             logger.info("="*80)
 
             return RecomendacionResponse(
@@ -587,7 +600,8 @@ class BusinessMutation:
                 productos=productos_response,
                 mejor_opcion_id=recommendation.best_option_id,
                 reasoning=recommendation.reasoning,
-                siguiente_paso=siguiente_paso
+                siguiente_paso=siguiente_paso,
+                audio_url=audio_url
             )
             
         except Exception as e:
@@ -619,6 +633,7 @@ class BusinessMutation:
         product_service: Annotated[ProductService, Inject],
         chat_history_service: Annotated["ChatHistoryService", Inject],
         session_factory: Annotated[async_sessionmaker[AsyncSession], Inject],
+        elevenlabs_service: Annotated[ElevenLabsService, Inject],
     ) -> ContinuarConversacionResponse:
         """
         Continúa el flujo de conversación después de procesarGuionAgente2.
@@ -733,11 +748,22 @@ class BusinessMutation:
                     except Exception as persist_err:
                         logger.warning(f"No se pudo persistir conversación: {persist_err}")
 
+                # Generar audio del mensaje
+                audio_url = None
+                try:
+                    audio_bytes = await elevenlabs_service.text_to_speech(mensaje_respuesta)
+                    if audio_bytes:
+                        audio_url = elevenlabs_service.audio_to_data_url(audio_bytes)
+                        logger.info(f"🔊 Audio generado (tamaño: {len(audio_bytes)} bytes)")
+                except Exception as audio_err:
+                    logger.warning(f"⚠️ No se pudo generar audio: {audio_err}")
+
                 return ContinuarConversacionResponse(
                     success=True,
                     mensaje=mensaje_respuesta,
                     mejor_opcion_id=session_data.get('mejor_opcion_id'),
-                    siguiente_paso="solicitar_datos_envio"
+                    siguiente_paso="solicitar_datos_envio",
+                    audio_url=audio_url
                 )
             
             # Si es rechazo → Ofrecer alternativa
@@ -807,11 +833,22 @@ class BusinessMutation:
                         except Exception as persist_err:
                             logger.warning(f"No se pudo persistir conversación: {persist_err}")
 
+                    # Generar audio del mensaje
+                    audio_url = None
+                    try:
+                        audio_bytes = await elevenlabs_service.text_to_speech(mensaje)
+                        if audio_bytes:
+                            audio_url = elevenlabs_service.audio_to_data_url(audio_bytes)
+                            logger.info(f"🔊 Audio generado (tamaño: {len(audio_bytes)} bytes)")
+                    except Exception as audio_err:
+                        logger.warning(f"⚠️ No se pudo generar audio: {audio_err}")
+
                     return ContinuarConversacionResponse(
                         success=True,
                         mensaje=mensaje,
                         mejor_opcion_id=siguiente_producto.get('id'),
-                        siguiente_paso="confirmar_compra"
+                        siguiente_paso="confirmar_compra",
+                        audio_url=audio_url
                     )
                 else:
                     # Sin más alternativas
@@ -843,10 +880,21 @@ class BusinessMutation:
                         except Exception as persist_err:
                             logger.warning(f"No se pudo persistir conversación: {persist_err}")
 
+                    # Generar audio del mensaje
+                    audio_url = None
+                    try:
+                        audio_bytes = await elevenlabs_service.text_to_speech(mensaje_sin_alternativas)
+                        if audio_bytes:
+                            audio_url = elevenlabs_service.audio_to_data_url(audio_bytes)
+                            logger.info(f"🔊 Audio generado (tamaño: {len(audio_bytes)} bytes)")
+                    except Exception as audio_err:
+                        logger.warning(f"⚠️ No se pudo generar audio: {audio_err}")
+
                     return ContinuarConversacionResponse(
                         success=True,
                         mensaje=mensaje_sin_alternativas,
-                        siguiente_paso="nueva_conversacion"
+                        siguiente_paso="nueva_conversacion",
+                        audio_url=audio_url
                     )
             
             # Si contiene datos de envío (talla + dirección)
@@ -976,6 +1024,16 @@ class BusinessMutation:
                         except Exception as persist_err:
                             logger.warning(f"No se pudo persistir conversación: {persist_err}")
 
+                    # Generar audio del mensaje
+                    audio_url = None
+                    try:
+                        audio_bytes = await elevenlabs_service.text_to_speech(mensaje)
+                        if audio_bytes:
+                            audio_url = elevenlabs_service.audio_to_data_url(audio_bytes)
+                            logger.info(f"🔊 Audio generado (tamaño: {len(audio_bytes)} bytes)")
+                    except Exception as audio_err:
+                        logger.warning(f"⚠️ No se pudo generar audio: {audio_err}")
+
                     return ContinuarConversacionResponse(
                         success=True,
                         mensaje=mensaje,
@@ -984,7 +1042,8 @@ class BusinessMutation:
                         order_id=order.id,
                         order_number=order_number,
                         order_total=order.total_amount,
-                        order_status=order.status
+                        order_status=order.status,
+                        audio_url=audio_url
                     )
 
                 except InsufficientStockError as e:
